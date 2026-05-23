@@ -125,7 +125,9 @@ async def _run_command(check: AcceptanceCheck, cwd: Path) -> CheckOutcome:
             description=check.description,
             detail=f"timeout after {check.timeout_seconds}s",
         )
-    output = (stdout_b.decode(errors="replace") + stderr_b.decode(errors="replace")).strip()
+    output = (
+        stdout_b.decode(errors="replace") + stderr_b.decode(errors="replace")
+    ).strip()
     # Обрезаем длинный вывод для лога.
     snippet = output if len(output) <= 800 else output[:800] + " ...[truncated]"
     detail = f"$ {cmd}\nexit={proc.returncode}\n{snippet}"

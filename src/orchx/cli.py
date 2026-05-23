@@ -69,9 +69,7 @@ def _make_file_handler(path: Path, verbose: bool) -> logging.FileHandler:
     """Создать ``FileHandler`` с привычным форматированием."""
     path.parent.mkdir(parents=True, exist_ok=True)
     h = logging.FileHandler(path, mode="a")
-    h.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    )
+    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     h.setLevel(logging.DEBUG if verbose else logging.WARNING)
     return h
 
@@ -95,9 +93,7 @@ def _setup_logging(verbose: bool, repo_root: Path) -> None:
     global _VERBOSE, _FILE_HANDLER
     _VERBOSE = verbose
 
-    file_handler = _make_file_handler(
-        paths.pending_dispatcher_log(repo_root), verbose
-    )
+    file_handler = _make_file_handler(paths.pending_dispatcher_log(repo_root), verbose)
     _FILE_HANDLER = file_handler
 
     handlers: list[logging.Handler] = [file_handler]
@@ -389,9 +385,7 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
         tui.print_dim(f"  full log: {pending_log}")
         return rc
     if not pending_plan.exists():
-        tui.print_error(
-            "Planner finished but did not write .orchx/_pending/plan.json."
-        )
+        tui.print_error("Planner finished but did not write .orchx/_pending/plan.json.")
         tui.print_dim(f"  full log: {pending_log}")
         return 1
 
@@ -555,7 +549,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     plan_path = _resolve_plan_path(repo_root, args.plan_path)
     if plan_path is None or not plan_path.exists():
         tui.print_error(
-            "plan not found. Run `orchx plan \"<task>\"` first or pass an "
+            'plan not found. Run `orchx plan "<task>"` first or pass an '
             "explicit path: `orchx run path/to/plan.json`."
         )
         return 2
@@ -618,7 +612,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             init_spinner.stop()
             try:
                 await init_spinner_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except asyncio.CancelledError, Exception:  # noqa: BLE001
                 pass
             tui.print_error("Cannot start orchX: working tree has uncommitted changes")
             tui.out("")
@@ -631,7 +625,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
         init_spinner.stop()
         try:
             await init_spinner_task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        except asyncio.CancelledError, Exception:  # noqa: BLE001
             pass
         board = board_ref.get("board")
         if board is not None:

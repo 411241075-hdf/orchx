@@ -93,10 +93,7 @@ class ReadTool(Tool):
                 entries = sorted(path.iterdir(), key=lambda p: p.name)
             except OSError as e:
                 return ToolResult(content=f"OS error: {e}", is_error=True)
-            lines = [
-                f"{p.name}/" if p.is_dir() else p.name
-                for p in entries
-            ]
+            lines = [f"{p.name}/" if p.is_dir() else p.name for p in entries]
             return ToolResult(content="\n".join(lines))
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -316,6 +313,7 @@ class GlobTool(Tool):
             matches = list(base.glob(pattern))
         except (OSError, ValueError) as e:
             return ToolResult(content=f"Glob error: {e}", is_error=True)
+
         # Сортируем по mtime desc.
         def _mtime(p: Path) -> float:
             try:

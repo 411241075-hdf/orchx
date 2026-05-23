@@ -222,8 +222,12 @@ class LLMClient:
         *,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        on_text_delta: Callable[[str], None] | Callable[[str], Awaitable[None]] | None = None,
-        on_tool_call_delta: Callable[[str], None] | Callable[[str], Awaitable[None]] | None = None,
+        on_text_delta: (
+            Callable[[str], None] | Callable[[str], Awaitable[None]] | None
+        ) = None,
+        on_tool_call_delta: (
+            Callable[[str], None] | Callable[[str], Awaitable[None]] | None
+        ) = None,
     ) -> ChatResponse:
         """Один стрим-запрос к Proxy с агрегацией ответа.
 
@@ -262,7 +266,7 @@ class LLMClient:
                 # finish_reason обычно прилетает в последней дельте.
                 try:
                     choice = chunk.choices[0]
-                except (AttributeError, IndexError):
+                except AttributeError, IndexError:
                     continue
                 if getattr(choice, "finish_reason", None):
                     finish_reason = choice.finish_reason
@@ -280,7 +284,11 @@ class LLMClient:
                     idx = getattr(tc_delta, "index", 0) or 0
                     acc = tool_acc.setdefault(
                         idx,
-                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                        {
+                            "id": "",
+                            "type": "function",
+                            "function": {"name": "", "arguments": ""},
+                        },
                     )
                     if getattr(tc_delta, "id", None):
                         acc["id"] = tc_delta.id
@@ -308,7 +316,7 @@ class LLMClient:
                 args = json.loads(args_str) if args_str else {}
                 if not isinstance(args, dict):
                     args = {}
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 args = {}
             parsed_calls.append(
                 ToolCall(

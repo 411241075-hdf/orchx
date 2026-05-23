@@ -19,7 +19,8 @@ def _ctx(cwd: Path, perms: Permissions | None = None) -> ToolContext:
     return ToolContext(
         cwd=cwd,
         repo_root=cwd,
-        permissions=perms or Permissions(edit=True, bash={"echo*": "allow", "*": "deny"}),
+        permissions=perms
+        or Permissions(edit=True, bash={"echo*": "allow", "*": "deny"}),
     )
 
 
@@ -32,9 +33,16 @@ def test_registry_respects_permissions(tmp_path: Path) -> None:
     # Полностью «open» воркер.
     ctx = _ctx(tmp_path)
     reg = build_tool_registry(ctx)
-    assert {"read", "write", "edit", "glob", "grep", "codesearch", "bash", "todowrite"} <= set(
-        reg.keys()
-    )
+    assert {
+        "read",
+        "write",
+        "edit",
+        "glob",
+        "grep",
+        "codesearch",
+        "bash",
+        "todowrite",
+    } <= set(reg.keys())
 
     # Read запрещён → ни read, ни glob, ни grep, ни codesearch.
     perms = Permissions(read=False, glob=False, grep=False, codesearch=False)
@@ -138,7 +146,9 @@ async def test_edit_ambiguous_match_requires_replace_all(tmp_path: Path) -> None
     (tmp_path / "f.py").write_text("x = 1\nx = 1\n")
     ctx = _ctx(tmp_path)
     reg = build_tool_registry(ctx)
-    r = await reg["edit"].run(ctx, file_path="f.py", old_string="x = 1", new_string="x = 2")
+    r = await reg["edit"].run(
+        ctx, file_path="f.py", old_string="x = 1", new_string="x = 2"
+    )
     assert r.is_error
     assert "2 matches" in r.content
     # С replace_all=True — успех.

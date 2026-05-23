@@ -49,8 +49,6 @@ class WorkerOutcome:
 _LOG_TOOL_RESULT_SNIPPET = 400
 
 
-
-
 async def run_agent(
     *,
     role: str,

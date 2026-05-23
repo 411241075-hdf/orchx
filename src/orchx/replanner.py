@@ -62,7 +62,9 @@ def render_replan_context(ctx: ReplanContext) -> str:
         "застрял на провале фазы; debugger исчерпал retry'и."
     )
     parts.append("")
-    parts.append(f"## Original task_id\n\n`{ctx.plan.task_id}` — **сохрани его в новом плане**.")
+    parts.append(
+        f"## Original task_id\n\n`{ctx.plan.task_id}` — **сохрани его в новом плане**."
+    )
     parts.append("")
     if ctx.plan.summary:
         parts.append(f"## Goal\n\n{ctx.plan.summary}")
@@ -83,9 +85,7 @@ def render_replan_context(ctx: ReplanContext) -> str:
     parts.append("")
     if ctx.completed_phase_ids:
         for pid in ctx.completed_phase_ids:
-            phase = next(
-                (p for p in ctx.plan.phases if p.id == pid), None
-            )
+            phase = next((p for p in ctx.plan.phases if p.id == pid), None)
             if phase:
                 parts.append(f"- `{pid}` — {phase.goal}")
     else:

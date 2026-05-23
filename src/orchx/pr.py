@@ -75,7 +75,7 @@ async def _git_credential_token(*, cwd: Path) -> str | None:
         stdout_b, _ = await asyncio.wait_for(
             proc.communicate(input=helper_input), timeout=5.0
         )
-    except (TimeoutError, OSError):
+    except TimeoutError, OSError:
         return None
     if proc.returncode != 0:
         return None
@@ -508,9 +508,7 @@ def render_pr_body(summary: dict) -> str:
     if halt_reason or fail > 0 or skip > 0:
         lines.append("> [!WARNING]")
         if halt_reason:
-            lines.append(
-                f"> **orchX остановлен до завершения работы.** {halt_reason}"
-            )
+            lines.append(f"> **orchX остановлен до завершения работы.** {halt_reason}")
         if fail > 0 or skip > 0:
             lines.append(
                 f"> Задачи: {succ} успешно, {fail} провалено, {skip} пропущено "
@@ -543,9 +541,7 @@ def render_pr_body(summary: dict) -> str:
 
     # Phases section (only if phased plan).
     phases = summary.get("phases", [])
-    show_phases = len(phases) > 1 or (
-        phases and phases[0].get("id") != "main"
-    )
+    show_phases = len(phases) > 1 or (phases and phases[0].get("id") != "main")
     if show_phases:
         lines += [
             "## Фазы работы",
@@ -557,9 +553,7 @@ def render_pr_body(summary: dict) -> str:
             goal = (ph.get("goal") or "").replace("|", "\\|").replace("\n", " ")
             if len(goal) > 300:
                 goal = goal[:297] + "..."
-            duration = (
-                f"{ph['duration_s']}с" if ph.get("duration_s") else "-"
-            )
+            duration = f"{ph['duration_s']}с" if ph.get("duration_s") else "-"
             lines.append(
                 f"| `{ph['id']}` | {ph['status']} | {ph['task_count']} | "
                 f"{duration} | {goal} |"
@@ -580,9 +574,7 @@ def render_pr_body(summary: dict) -> str:
                 f"→ {entry['outcome']}"
             )
             if entry.get("new_phases"):
-                lines.append(
-                    f"  - Новые фазы: {', '.join(entry['new_phases'])}"
-                )
+                lines.append(f"  - Новые фазы: {', '.join(entry['new_phases'])}")
             if entry.get("error"):
                 lines.append(f"  - Ошибка: {entry['error']}")
         lines.append("")
@@ -606,9 +598,7 @@ def render_pr_body(summary: dict) -> str:
             notes = (t.get("notes") or "").replace("|", "\\|").replace("\n", " ")
             if len(notes) > 300:
                 notes = notes[:297] + "..."
-            lines.append(
-                f"| `{t['id']}` | {t['agent']} | {t['attempts']} | {notes} |"
-            )
+            lines.append(f"| `{t['id']}` | {t['agent']} | {t['attempts']} | {notes} |")
         lines.append("")
 
     if skipped_tasks:
@@ -638,9 +628,7 @@ def render_pr_body(summary: dict) -> str:
             notes = (t.get("notes") or "").replace("|", "\\|").replace("\n", " ")
             if len(notes) > 300:
                 notes = notes[:297] + "..."
-            lines.append(
-                f"| `{t['id']}` | {t['agent']} | {t['attempts']} | {notes} |"
-            )
+            lines.append(f"| `{t['id']}` | {t['agent']} | {t['attempts']} | {notes} |")
         lines.append("")
 
     lines += [

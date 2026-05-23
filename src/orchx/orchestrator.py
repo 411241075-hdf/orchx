@@ -111,7 +111,9 @@ class AttemptInfo:
     """Что произошло в одной попытке выполнения задачи."""
 
     attempt_num: int
-    agent_used: str  # короткое имя роли (implementer, debugger) или полное имя из старых логов
+    agent_used: (
+        str  # короткое имя роли (implementer, debugger) или полное имя из старых логов
+    )
     outcome: runner.WorkerOutcome | None = None
     acceptance_outcomes: list[acceptance.CheckOutcome] = field(default_factory=list)
     failure_reason: str = ""
@@ -238,6 +240,7 @@ async def _initialize_context(
             creating integration branch, adding worktree). CLI/TUI передаёт
             его, чтобы spinner показывал, что именно сейчас делается.
     """
+
     def _progress(stage: str) -> None:
         if on_init_progress is not None:
             try:
@@ -338,9 +341,7 @@ def _initialize_task_states_from_plan(ctx: OrchXContext, plan: Plan) -> None:
                 continue
             branch = f"orchX-tasks/{plan.task_id}/{spec.id}"
             wt = ctx.worktrees_root / spec.id
-            ctx.states[spec.id] = TaskState(
-                spec=spec, branch=branch, worktree_path=wt
-            )
+            ctx.states[spec.id] = TaskState(spec=spec, branch=branch, worktree_path=wt)
 
 
 async def _cleanup_previous_run(ctx: OrchXContext) -> None:
@@ -438,7 +439,17 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 # Текстовые дельты от LLM (assistant content) тоже падают сюда, но обычно
 # это длинные «mind voice»-фразы — их тоже показываем (укорочённо), это
 # приятный live-feedback.
-_ACTIVITY_TOOL_VERBS = ("→ tool", "read ", "write ", "edit ", "glob ", "grep ", "codesearch ", "bash ", "todo")
+_ACTIVITY_TOOL_VERBS = (
+    "→ tool",
+    "read ",
+    "write ",
+    "edit ",
+    "glob ",
+    "grep ",
+    "codesearch ",
+    "bash ",
+    "todo",
+)
 
 
 def _extract_activity(line: str) -> str:
@@ -476,7 +487,9 @@ def _build_debugger_context(state: TaskState) -> str:
 
     parts: list[str] = []
     parts.append(f"**Original agent:** `{state.spec.agent}`")
-    parts.append(f"**Attempt #{last.attempt_num} verdict:** {last.failure_reason or '(unspecified)'}")
+    parts.append(
+        f"**Attempt #{last.attempt_num} verdict:** {last.failure_reason or '(unspecified)'}"
+    )
     if last.outcome:
         parts.append(
             f"**Wall time:** {last.outcome.duration_s:.1f}s, "
@@ -500,9 +513,7 @@ def _build_debugger_context(state: TaskState) -> str:
             elif check.type == "file_exists":
                 line += f"\n    - `file_exists:` `{check.path}`"
             elif check.type == "file_contains":
-                line += (
-                    f"\n    - `file_contains:` `{check.path}` ~ `{check.pattern}`"
-                )
+                line += f"\n    - `file_contains:` `{check.path}` ~ `{check.pattern}`"
             line += f"\n    - `result:` {detail}"
             parts.append(line)
     else:
@@ -517,9 +528,7 @@ def _build_debugger_context(state: TaskState) -> str:
     ]
     if repro_cmds:
         parts.append("\n### Reproduce locally")
-        parts.append(
-            "Прогони эти команды в worktree, чтобы увидеть текущее состояние:"
-        )
+        parts.append("Прогони эти команды в worktree, чтобы увидеть текущее состояние:")
         for cmd in repro_cmds:
             parts.append(f"```bash\n{cmd}\n```")
 
@@ -528,8 +537,7 @@ def _build_debugger_context(state: TaskState) -> str:
         parts.append(
             f"- **status:** `{state.last_result.status}`\n"
             f"- **artifacts:** {list(state.last_result.artifacts) or '_none_'}\n"
-            f"- **notes:**\n\n"
-            + (state.last_result.notes or "_(empty)_")
+            f"- **notes:**\n\n" + (state.last_result.notes or "_(empty)_")
         )
 
     if last.outcome and last.outcome.stderr:
@@ -572,9 +580,7 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
     attempt_num = state.attempt_count + 1
     state.status = "running"
 
-    is_debugger_retry = (
-        attempt_num > 1 and ctx.config.use_debugger_on_retry
-    )
+    is_debugger_retry = attempt_num > 1 and ctx.config.use_debugger_on_retry
     agent_to_use = _agent_for_attempt(ctx, state)
     debug_ctx = _build_debugger_context(state) if is_debugger_retry else None
 
@@ -591,9 +597,7 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
     _write_task_artifacts(ctx, state, debugger_context=debug_ctx)
 
     log_file = ctx.run_dir / "logs" / f"{state.spec.id}.attempt{attempt_num}.log"
-    effort = (
-        ctx.config.debugger_effort if is_debugger_retry else ctx.config.effort
-    )
+    effort = ctx.config.debugger_effort if is_debugger_retry else ctx.config.effort
 
     def _on_activity(line: str) -> None:
         activity = _extract_activity(line)
@@ -780,7 +784,9 @@ async def _resolve_merge_conflict(
         result_path.unlink()
 
     log_file = (
-        ctx.run_dir / "logs" / f"{state.spec.id}.merger.attempt{state.attempt_count}.log"
+        ctx.run_dir
+        / "logs"
+        / f"{state.spec.id}.merger.attempt{state.attempt_count}.log"
     )
     outcome = await runner.run_worker(
         llm=ctx.llm,
@@ -885,9 +891,7 @@ async def _git_unmerged_files(cwd: Path) -> list[str]:
 CONFLICT_MARKER_PREFIXES = ("<<<<<<<", "=======", ">>>>>>>")
 
 
-async def _files_with_conflict_markers(
-    cwd: Path, files: list[str]
-) -> list[str]:
+async def _files_with_conflict_markers(cwd: Path, files: list[str]) -> list[str]:
     """Файлы из ``files``, в которых ещё остались git conflict markers."""
     bad: list[str] = []
     for f in files:
@@ -1118,8 +1122,7 @@ async def _run_task_with_retries(ctx: OrchXContext, state: TaskState) -> None:
         if dep is None or dep.status != "success":
             state.status = "skipped"
             state.notes = (
-                f"dependency {dep_id} status="
-                f"{dep.status if dep else 'missing'}"
+                f"dependency {dep_id} status=" f"{dep.status if dep else 'missing'}"
             )
             _orchX_log(ctx, f"task {spec.id} SKIPPED ({state.notes})")
             return
@@ -1138,9 +1141,7 @@ async def _run_task_with_retries(ctx: OrchXContext, state: TaskState) -> None:
         if state.attempt_count > spec.max_retries:
             break
         if ctx.total_retries >= ctx.plan.global_budget.max_total_retries:
-            _orchX_log(
-                ctx, f"global retry budget exhausted; not retrying {spec.id}"
-            )
+            _orchX_log(ctx, f"global retry budget exhausted; not retrying {spec.id}")
             break
         ctx.total_retries += 1
         _orchX_log(
@@ -1202,9 +1203,7 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
         ревьюить).
     """
     # Проверим, что есть какой-то дифф для ревью.
-    diff_check = await _git_diff_summary(
-        ctx.integration_worktree, ctx.plan.base_branch
-    )
+    diff_check = await _git_diff_summary(ctx.integration_worktree, ctx.plan.base_branch)
     if not diff_check:
         _orchX_log(ctx, "auto-review skipped: no diff vs base_branch")
         return None
@@ -1270,7 +1269,9 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
 
     diff_stat = await _git_diff_stat(review_wt, ctx.plan.base_branch)
     task_md = _render_reviewer_task_md(
-        ctx=ctx, review_spec=review_spec, result_path_rel=result_path_rel,
+        ctx=ctx,
+        review_spec=review_spec,
+        result_path_rel=result_path_rel,
         diff_stat=diff_stat,
     )
     (orchX_dir / "task.md").write_text(task_md, encoding="utf-8")
@@ -1513,15 +1514,12 @@ async def _run_one_phase(ctx: OrchXContext, phase: PhaseSpec) -> bool:
 
     # Оценить итог фазы.
     failed_in_phase = [
-        ctx.states[tid]
-        for tid in ps.task_ids
-        if ctx.states[tid].status == "failed"
+        ctx.states[tid] for tid in ps.task_ids if ctx.states[tid].status == "failed"
     ]
     if failed_in_phase:
         ps.status = "failed"
-        ps.notes = (
-            f"{len(failed_in_phase)} tasks failed: "
-            + ", ".join(s.spec.id for s in failed_in_phase)
+        ps.notes = f"{len(failed_in_phase)} tasks failed: " + ", ".join(
+            s.spec.id for s in failed_in_phase
         )
         ps.finished_at = time.monotonic()
         _orchX_log(ctx, f"phase {phase.id} FAILED: {ps.notes}")
@@ -1530,7 +1528,9 @@ async def _run_one_phase(ctx: OrchXContext, phase: PhaseSpec) -> bool:
     ps.status = "success"
     ps.notes = f"{len(ps.task_ids)} tasks ok"
     ps.finished_at = time.monotonic()
-    _orchX_log(ctx, f"phase {phase.id} SUCCESS in {ps.finished_at - ps.started_at:.0f}s")
+    _orchX_log(
+        ctx, f"phase {phase.id} SUCCESS in {ps.finished_at - ps.started_at:.0f}s"
+    )
     ctx.completed_phase_ids.append(phase.id)
     return True
 
@@ -1764,11 +1764,7 @@ async def run_orchX(
         ctx,
         f"orchX done: success={summary['counts']['success']} "
         f"failed={summary['counts']['failed']} skipped={summary['counts']['skipped']}"
-        + (
-            f" review={summary['review']['status']}"
-            if summary.get("review")
-            else ""
-        ),
+        + (f" review={summary['review']['status']}" if summary.get("review") else ""),
     )
     return summary
 

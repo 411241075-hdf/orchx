@@ -171,7 +171,9 @@ async def create_integration_branch(
         logger.info("Reusing integration branch %s", integration_branch)
         return
     await _git("branch", integration_branch, base_branch, cwd=repo_root)
-    logger.info("Created integration branch %s from %s", integration_branch, base_branch)
+    logger.info(
+        "Created integration branch %s from %s", integration_branch, base_branch
+    )
 
 
 async def add_worktree(
@@ -210,9 +212,13 @@ async def remove_worktree(repo_root: Path, worktree_path: Path) -> None:
     try:
         await _git("worktree", "remove", str(worktree_path), cwd=repo_root)
     except GitError:
-        logger.warning("worktree remove failed, retrying with --force: %s", worktree_path)
+        logger.warning(
+            "worktree remove failed, retrying with --force: %s", worktree_path
+        )
         try:
-            await _git("worktree", "remove", "--force", str(worktree_path), cwd=repo_root)
+            await _git(
+                "worktree", "remove", "--force", str(worktree_path), cwd=repo_root
+            )
         except GitError as e:
             logger.error("worktree --force remove also failed: %s", e)
             # Last resort: rmtree, then prune.

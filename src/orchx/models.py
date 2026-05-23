@@ -226,6 +226,7 @@ def _parse_phase(raw: dict[str, Any], prev_phase_id: str | None) -> PhaseSpec:
     «плейсхолдеры» от planner'а, не реальная работа.
     """
     import logging as _lg
+
     _logger = _lg.getLogger(__name__)
     phase_id = raw.get("id")
     if not isinstance(phase_id, str) or not SLUG_RE.match(phase_id):
@@ -249,7 +250,9 @@ def _parse_phase(raw: dict[str, Any], prev_phase_id: str | None) -> PhaseSpec:
                 "plan: phase %r task %r uses dispatcher-managed agent %r — "
                 "silently dropped (it is invoked automatically by the dispatcher "
                 "on retry/finalize)",
-                phase_id, tid, agent,
+                phase_id,
+                tid,
+                agent,
             )
             continue
         scope = t.get("file_scope")
@@ -258,7 +261,8 @@ def _parse_phase(raw: dict[str, Any], prev_phase_id: str | None) -> PhaseSpec:
                 "plan: phase %r task %r has empty file_scope — silently dropped "
                 "(use file_scope=['<file>'] for real edits, or move the task "
                 "out of the plan if it has no concrete output)",
-                phase_id, tid,
+                phase_id,
+                tid,
             )
             continue
         filtered_raw.append(t)
@@ -278,7 +282,8 @@ def _parse_phase(raw: dict[str, Any], prev_phase_id: str | None) -> PhaseSpec:
     id_set = set(ids)
     # Также чистим depends_on от ссылок на отброшенные задачи (если такие были).
     dropped_ids = {
-        t.get("id") for t in tasks_raw
+        t.get("id")
+        for t in tasks_raw
         if isinstance(t, dict) and t.get("id") not in id_set
     }
     if dropped_ids:
@@ -290,7 +295,9 @@ def _parse_phase(raw: dict[str, Any], prev_phase_id: str | None) -> PhaseSpec:
                 _logger.warning(
                     "plan: phase %r task %r had depends_on referencing dropped "
                     "tasks %s — cleaned",
-                    phase_id, t.id, dropped_ids & set(t.depends_on),
+                    phase_id,
+                    t.id,
+                    dropped_ids & set(t.depends_on),
                 )
                 cleaned.append(
                     TaskSpec(
@@ -374,7 +381,11 @@ def load_plan(path: Path) -> Plan:
         # Оборачиваем плоский список в фиктивную фазу, чтобы переиспользовать
         # фильтрацию dispatcher-managed агентов и empty-scope задач.
         synthetic_phase = _parse_phase(
-            {"id": "main", "goal": "Main phase (flat plan normalized)", "tasks": tasks_raw},
+            {
+                "id": "main",
+                "goal": "Main phase (flat plan normalized)",
+                "tasks": tasks_raw,
+            },
             prev_phase_id=None,
         )
         phases: tuple[PhaseSpec, ...] = (synthetic_phase,)
@@ -470,7 +481,9 @@ def load_result(path: Path) -> TaskResult:
     if status not in VALID_RESULT_STATUSES:
         raise ValueError(f"{path}: invalid status {status!r}")
     artifacts = raw.get("artifacts") or []
-    if not isinstance(artifacts, list) or not all(isinstance(a, str) for a in artifacts):
+    if not isinstance(artifacts, list) or not all(
+        isinstance(a, str) for a in artifacts
+    ):
         raise ValueError(f"{path}: artifacts must be a list of strings")
     notes = raw.get("notes") or ""
     followups_raw = raw.get("needs_followup") or []

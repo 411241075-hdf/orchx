@@ -30,7 +30,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Iterable
 
-
 # ---------------------------------------------------------------------------
 # ANSI helpers
 # ---------------------------------------------------------------------------
@@ -420,9 +419,7 @@ class LiveBoard:
             ph_name = ph["name"]
             if len(ph_name) > name_max:
                 ph_name = ph_name[: name_max - 1] + "…"
-            lines.append(
-                f"{ph_glyph} {bold(ph_name)}  {dim('(' + ph['id'] + ')')}"
-            )
+            lines.append(f"{ph_glyph} {bold(ph_name)}  {dim('(' + ph['id'] + ')')}")
             for t in ph["tasks"]:
                 glyph = status_glyph(t["status"])
                 colored_status = _colorize_status(t["status"])
@@ -496,17 +493,12 @@ class LiveBoard:
         for ph in snap.phases:
             key_p = f"phase:{ph['id']}"
             if self._last_seen_status.get(key_p) != ph["status"]:
-                out(
-                    f"[phase] {ph['name']} "
-                    f"({ph['id']}) -> {ph['status']}"
-                )
+                out(f"[phase] {ph['name']} " f"({ph['id']}) -> {ph['status']}")
                 self._last_seen_status[key_p] = ph["status"]
             for t in ph["tasks"]:
                 key_t = f"task:{t['id']}"
                 if self._last_seen_status.get(key_t) != t["status"]:
-                    out(
-                        f"[task]  {t['id']:<28} {t['agent']:<24} -> {t['status']}"
-                    )
+                    out(f"[task]  {t['id']:<28} {t['agent']:<24} -> {t['status']}")
                     self._last_seen_status[key_t] = t["status"]
         if snap.review_label:
             key_r = "review"
@@ -633,9 +625,7 @@ def print_run_summary(summary: dict) -> None:
         out(f"  {dim('Phases:')}")
         for ph in phases:
             glyph = status_glyph(ph.get("status", "pending"))
-            display = (
-                ph.get("name") or ph.get("goal") or ph.get("id") or "?"
-            )
+            display = ph.get("name") or ph.get("goal") or ph.get("id") or "?"
             out(
                 f"    {glyph} {display}  "
                 f"{dim('(' + ph.get('id', '') + ')')}  "

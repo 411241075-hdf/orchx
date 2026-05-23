@@ -124,9 +124,7 @@ def describe_permissions(p: Permissions) -> str:
     ]
     if p.semantic_search:
         flags.append(("semantic_search", True))
-    lines.append(
-        "- Read tools: " + ", ".join(name for name, ok in flags if ok)
-    )
+    lines.append("- Read tools: " + ", ".join(name for name, ok in flags if ok))
     if isinstance(p.edit, bool):
         lines.append(f"- edit: {'allowed' if p.edit else 'DENIED'}")
     else:

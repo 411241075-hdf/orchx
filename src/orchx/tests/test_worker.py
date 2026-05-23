@@ -35,7 +35,9 @@ class ScriptedLLM:
     def __post_init__(self) -> None:
         self._iter = iter(self.responses)
 
-    def for_role(self, role: str, *, effort: str | None = None) -> "ScriptedLLM":  # noqa: ARG002
+    def for_role(
+        self, role: str, *, effort: str | None = None
+    ) -> "ScriptedLLM":  # noqa: ARG002
         return self
 
     async def chat(

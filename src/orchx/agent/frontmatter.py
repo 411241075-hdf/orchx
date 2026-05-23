@@ -100,7 +100,7 @@ def parse_agent_markdown(text: str, *, role: str, name: str) -> AgentSpec:
     description = str(fm.get("description") or "").strip()
     try:
         max_steps = int(fm.get("steps", 80))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         max_steps = 80
     perms_raw = fm.get("permission") or {}
     perms = (

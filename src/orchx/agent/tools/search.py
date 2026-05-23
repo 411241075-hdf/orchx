@@ -16,7 +16,6 @@ from typing import Any
 
 from . import Tool, ToolContext, ToolResult
 
-
 # ---------------------------------------------------------------------------
 # Common: rg detection
 # ---------------------------------------------------------------------------
@@ -89,7 +88,7 @@ def _python_grep(
                             out.append(f"{rel}:{lineno}:{line.rstrip()}")
                             if len(out) >= 5000:
                                 return out
-            except (OSError, UnicodeDecodeError):
+            except OSError, UnicodeDecodeError:
                 continue
     return out
 
@@ -153,7 +152,8 @@ class GrepTool(Tool):
     ) -> ToolResult:
         ctx.activity(f"grep {pattern}")
         base = (
-            (ctx.cwd / path).resolve() if path and not Path(path).is_absolute()
+            (ctx.cwd / path).resolve()
+            if path and not Path(path).is_absolute()
             else (Path(path).resolve() if path else ctx.cwd)
         )
         if not base.exists():
@@ -214,7 +214,8 @@ class CodeSearchTool(Tool):
     ) -> ToolResult:
         ctx.activity(f"codesearch {pattern}")
         base = (
-            (ctx.cwd / path).resolve() if path and not Path(path).is_absolute()
+            (ctx.cwd / path).resolve()
+            if path and not Path(path).is_absolute()
             else (Path(path).resolve() if path else ctx.cwd)
         )
         if not base.exists():

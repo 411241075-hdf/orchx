@@ -32,7 +32,12 @@ class TodoWriteTool(Tool):
                         "content": {"type": "string"},
                         "status": {
                             "type": "string",
-                            "enum": ["pending", "in_progress", "completed", "cancelled"],
+                            "enum": [
+                                "pending",
+                                "in_progress",
+                                "completed",
+                                "cancelled",
+                            ],
                         },
                         "priority": {
                             "type": "string",
