@@ -57,6 +57,7 @@ class TodoWriteTool(Tool):
         *,
         todos: list[dict[str, Any]] | None = None,
     ) -> ToolResult:
+        """Заменить in-memory TODO-список воркера (см. описание класса)."""
         items = todos or []
         if not isinstance(items, list):
             return ToolResult(content="todos must be a list", is_error=True)

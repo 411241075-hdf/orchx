@@ -132,6 +132,26 @@ async def run_agent(
     full_text: list[str] = []
     timed_out = False
     rc = -1
+
+    # Стрим-колбэки определены один раз — оба замыкания захватывают
+    # loop-invariant ``log_fh`` и ``_activity``, перецеплять их по шагу
+    # нет смысла.
+    def _on_text(delta: str) -> None:
+        try:
+            log_fh.write(delta)
+            log_fh.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        _activity(delta)
+
+    def _on_tc(name: str) -> None:
+        try:
+            log_fh.write(f"\n[tool-call] {name}\n")
+            log_fh.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        _activity(f"→ tool {name}")
+
     try:
         for step in range(1, spec.max_steps + 1):
             remaining = deadline - time.monotonic()
@@ -142,23 +162,6 @@ async def run_agent(
 
             log_fh.write(f"\n=== step {step} (assistant) ===\n")
             log_fh.flush()
-
-            # Вызов LLM. Стримим текст в лог + наверх через on_activity.
-            def _on_text(delta: str) -> None:
-                try:
-                    log_fh.write(delta)
-                    log_fh.flush()
-                except Exception:  # noqa: BLE001
-                    pass
-                _activity(delta)
-
-            def _on_tc(name: str) -> None:
-                try:
-                    log_fh.write(f"\n[tool-call] {name}\n")
-                    log_fh.flush()
-                except Exception:  # noqa: BLE001
-                    pass
-                _activity(f"→ tool {name}")
 
             try:
                 resp = await role_llm.chat(

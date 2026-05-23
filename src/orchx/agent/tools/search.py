@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
 
 from . import Tool, ToolContext, ToolResult
 
@@ -88,7 +87,7 @@ def _python_grep(
                             out.append(f"{rel}:{lineno}:{line.rstrip()}")
                             if len(out) >= 5000:
                                 return out
-            except OSError, UnicodeDecodeError:
+            except (OSError, UnicodeDecodeError):
                 continue
     return out
 
@@ -150,6 +149,7 @@ class GrepTool(Tool):
         path: str | None = None,
         include: str | None = None,
     ) -> ToolResult:
+        """Найти регулярку в файлах (см. описание класса)."""
         ctx.activity(f"grep {pattern}")
         base = (
             (ctx.cwd / path).resolve()
@@ -207,11 +207,14 @@ class CodeSearchTool(Tool):
     async def run(
         self,
         ctx: ToolContext,
-        *,
-        pattern: str,
-        path: str | None = None,
-        type: str | None = None,  # noqa: A002 (param name matches OpenAI schema)
+        **kwargs,  # принимаем `type` (имя tool-аргумента в OpenAI-схеме) без shadowing builtin
     ) -> ToolResult:
+        """Найти регулярку с фильтром по типу файла (см. описание класса)."""
+        pattern = kwargs.get("pattern")
+        if not isinstance(pattern, str) or not pattern:
+            return ToolResult(content="pattern is required", is_error=True)
+        path = kwargs.get("path")
+        file_type = kwargs.get("type")
         ctx.activity(f"codesearch {pattern}")
         base = (
             (ctx.cwd / path).resolve()
@@ -222,8 +225,8 @@ class CodeSearchTool(Tool):
             return ToolResult(content=f"Path not found: {base}", is_error=True)
         if _has_rg():
             args = ["--no-heading", "-n", "-S", pattern]
-            if type:
-                args += ["--type", type]
+            if file_type:
+                args += ["--type", file_type]
             args.append(str(base))
             rc, out, err = await _run_rg(args, ctx.cwd)
             if rc not in (0, 1):

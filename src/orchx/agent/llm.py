@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -37,7 +38,7 @@ class LLMConfig:
     """Произвольные заголовки (например, для трассировки)."""
 
     @classmethod
-    def from_env(cls, *, model_override: str | None = None) -> "LLMConfig":
+    def from_env(cls, *, model_override: str | None = None) -> LLMConfig:
         """Загрузить конфиг из переменных окружения.
 
         Обязательные:
@@ -166,6 +167,7 @@ class LLMClient:
     """
 
     def __init__(self, cfg: LLMConfig):
+        """Создать клиент с заданным :class:`LLMConfig`."""
         # ленивый импорт openai-SDK: не делаем его hard-dep самого пакета,
         # тесты подкладывают мок.
         from openai import AsyncOpenAI
@@ -198,7 +200,7 @@ class LLMClient:
         role: str,
         *,
         effort: str | None = None,
-    ) -> "LLMClient":
+    ) -> LLMClient:
         """Создать дочерний клиент с per-role override модели/effort'а.
 
         Modeл'и берутся из env: ``ORCHX_<ROLE>_MODEL`` (например,
@@ -266,7 +268,7 @@ class LLMClient:
                 # finish_reason обычно прилетает в последней дельте.
                 try:
                     choice = chunk.choices[0]
-                except AttributeError, IndexError:
+                except (AttributeError, IndexError):
                     continue
                 if getattr(choice, "finish_reason", None):
                     finish_reason = choice.finish_reason
@@ -311,12 +313,10 @@ class LLMClient:
         for raw in raw_calls:
             args_str = raw.get("function", {}).get("arguments", "") or ""
             try:
-                import json
-
                 args = json.loads(args_str) if args_str else {}
                 if not isinstance(args, dict):
                     args = {}
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 args = {}
             parsed_calls.append(
                 ToolCall(

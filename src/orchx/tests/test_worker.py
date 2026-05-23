@@ -13,8 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from orchx.agent.llm import ChatResponse, ToolCall
 from orchx.agent.worker import run_agent
 
@@ -37,7 +35,7 @@ class ScriptedLLM:
 
     def for_role(
         self, role: str, *, effort: str | None = None
-    ) -> "ScriptedLLM":  # noqa: ARG002
+    ) -> ScriptedLLM:  # noqa: ARG002
         return self
 
     async def chat(

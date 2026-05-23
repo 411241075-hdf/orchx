@@ -8,9 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 from pathlib import Path
-from typing import Any
 
 from . import Tool, ToolContext, ToolResult
 
@@ -58,6 +58,7 @@ class BashTool(Tool):
         timeout_ms: int = 120000,
         workdir: str | None = None,
     ) -> ToolResult:
+        """Запустить bash-команду с allow-list-проверкой (см. описание класса)."""
         ctx.activity(f"bash {command[:80]}")
         allowed, pattern = ctx.permissions.bash_allowed(command)
         if not allowed:
@@ -84,7 +85,7 @@ class BashTool(Tool):
                 stderr=asyncio.subprocess.PIPE,
                 env=os.environ.copy(),
             )
-        except (OSError, FileNotFoundError) as e:
+        except OSError as e:
             return ToolResult(content=f"Failed to start bash: {e}", is_error=True)
 
         try:
@@ -92,10 +93,11 @@ class BashTool(Tool):
                 proc.communicate(), timeout=timeout_ms / 1000.0
             )
         except TimeoutError:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            except ProcessLookupError:
-                pass
+            # Дождёмся реального завершения, чтобы не оставить zombie.
+            with contextlib.suppress(Exception):
+                await proc.wait()
             return ToolResult(
                 content=f"Command timed out after {timeout_ms}ms",
                 is_error=True,

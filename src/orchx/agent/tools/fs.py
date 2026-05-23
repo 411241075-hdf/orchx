@@ -7,9 +7,7 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from typing import Any
 
 from . import Tool, ToolContext, ToolResult
 
@@ -81,6 +79,7 @@ class ReadTool(Tool):
         offset: int = 1,
         limit: int = 2000,
     ) -> ToolResult:
+        """Прочитать файл/директорию (см. описание класса)."""
         ctx.activity(f"read {file_path}")
         path = _resolve(ctx, file_path)
         if not path.exists():
@@ -150,6 +149,7 @@ class WriteTool(Tool):
         file_path: str,
         content: str,
     ) -> ToolResult:
+        """Записать файл целиком (см. описание класса)."""
         ctx.activity(f"write {file_path}")
         path = _resolve(ctx, file_path)
         rel = _rel(ctx, path)
@@ -217,6 +217,7 @@ class EditTool(Tool):
         new_string: str,
         replace_all: bool = False,
     ) -> ToolResult:
+        """Заменить ``old_string`` на ``new_string`` (см. описание класса)."""
         ctx.activity(f"edit {file_path}")
         path = _resolve(ctx, file_path)
         rel = _rel(ctx, path)
@@ -305,6 +306,7 @@ class GlobTool(Tool):
         pattern: str,
         path: str | None = None,
     ) -> ToolResult:
+        """Найти файлы по glob-паттерну (см. описание класса)."""
         ctx.activity(f"glob {pattern}")
         base = _resolve(ctx, path) if path else ctx.cwd
         if not base.exists() or not base.is_dir():

@@ -553,6 +553,14 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             "explicit path: `orchx run path/to/plan.json`."
         )
         return 2
+    # Fail-fast: проверим обязательные env до того, как стартуем spinner и
+    # cleanup worktrees. Если ORCHX_LLM_BASE_URL/API_KEY/MODEL не заданы —
+    # все равно дальше не пойдём, лучше сказать сейчас.
+    try:
+        LLMConfig.from_env()
+    except RuntimeError as e:
+        tui.print_error(str(e))
+        return 2
     config = _orchX_config_from_args(args)
 
     # Подгрузим план только для красивого intro-баннера; настоящая загрузка

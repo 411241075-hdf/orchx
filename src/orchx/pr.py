@@ -75,7 +75,7 @@ async def _git_credential_token(*, cwd: Path) -> str | None:
         stdout_b, _ = await asyncio.wait_for(
             proc.communicate(input=helper_input), timeout=5.0
         )
-    except TimeoutError, OSError:
+    except (TimeoutError, OSError):
         return None
     if proc.returncode != 0:
         return None

@@ -74,7 +74,7 @@ class Permissions:
         """
         rules = sorted(
             self.bash.items(),
-            key=lambda kv: ("*" == kv[0], -len(kv[0])),
+            key=lambda kv: (kv[0] == "*", -len(kv[0])),
         )
         for pattern, action in rules:
             if fnmatch.fnmatchcase(command, pattern):

@@ -41,11 +41,15 @@ async def _git(*args: str, cwd: Path) -> str:
 
 
 class DirtyWorkingTreeError(GitError):
-    """Раздельный класс — чтобы CLI мог отличить «грязный workdir» от прочих
+    """Сигнал, что репо не чист — диспетчер откажется стартовать.
+
+    Раздельный класс — чтобы CLI мог отличить «грязный workdir» от прочих
     git-ошибок и показать пользователю осмысленный совет (commit/stash/auto-stash)
-    вместо traceback'а."""
+    вместо traceback'а.
+    """
 
     def __init__(self, status: str) -> None:
+        """Сохранить вывод ``git status --porcelain`` для последующего показа."""
         self.status = status
         super().__init__(self._format_message(status))
 
@@ -131,8 +135,11 @@ async def auto_stash(repo_root: Path, label: str) -> str | None:
 
 
 async def stash_pop(repo_root: Path) -> None:
-    """Снять верхний stash entry. Игнорирует ошибки конфликтов — пользователь
-    увидит их в обычном `git status` потом."""
+    """Снять верхний stash entry.
+
+    Игнорирует ошибки конфликтов — пользователь увидит их в обычном
+    ``git status`` потом.
+    """
     try:
         await _git("stash", "pop", cwd=repo_root)
     except GitError as e:  # noqa: BLE001

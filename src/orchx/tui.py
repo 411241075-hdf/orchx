@@ -26,9 +26,9 @@ import re
 import shutil
 import sys
 import time
+from collections.abc import Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Iterable
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -69,38 +69,47 @@ def _c(code: str, text: str) -> str:
 
 
 def bold(text: str) -> str:
+    """Сделать текст жирным (если терминал поддерживает цвета)."""
     return _c(_BOLD, text)
 
 
 def dim(text: str) -> str:
+    """Сделать текст приглушённым."""
     return _c(_DIM, text)
 
 
 def red(text: str) -> str:
+    """Покрасить текст в красный."""
     return _c("\x1b[31m", text)
 
 
 def green(text: str) -> str:
+    """Покрасить текст в зелёный."""
     return _c("\x1b[32m", text)
 
 
 def yellow(text: str) -> str:
+    """Покрасить текст в жёлтый."""
     return _c("\x1b[33m", text)
 
 
 def blue(text: str) -> str:
+    """Покрасить текст в синий."""
     return _c("\x1b[34m", text)
 
 
 def magenta(text: str) -> str:
+    """Покрасить текст в фуксию."""
     return _c("\x1b[35m", text)
 
 
 def cyan(text: str) -> str:
+    """Покрасить текст в циан."""
     return _c("\x1b[36m", text)
 
 
 def gray(text: str) -> str:
+    """Покрасить текст в серый."""
     return _c("\x1b[90m", text)
 
 
@@ -184,6 +193,7 @@ _GLYPHS = {
 
 
 def status_glyph(status: str) -> str:
+    """Вернуть глиф (с цветом) для статуса задачи (running/success/failed/...)."""
     return _GLYPHS.get(status, dim("?"))
 
 
@@ -217,6 +227,7 @@ class Spinner:
     """
 
     def __init__(self, message: str) -> None:
+        """Создать спиннер с начальной строкой ``message``."""
         self.message = message
         self.detail = ""
         self._task: asyncio.Task[None] | None = None
@@ -262,11 +273,13 @@ class Spinner:
             sys.stdout.write(_SHOW_CURSOR)
             sys.stdout.flush()
 
-    async def __aenter__(self) -> "Spinner":
+    async def __aenter__(self) -> Spinner:
+        """Старт спиннера через ``async with``."""
         self._task = asyncio.create_task(self._run())
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        """Остановить спиннер и дождаться завершения фоновой корутины."""
         self._stop.set()
         if self._task is not None:
             try:
@@ -311,6 +324,7 @@ class LiveBoard:
     """
 
     def __init__(self, ctx, refresh_s: float = 0.4) -> None:
+        """Создать live-доску для ``ctx`` с интервалом обновления ``refresh_s``."""
         self.ctx = ctx
         self.refresh_s = refresh_s
         self._stop = asyncio.Event()
@@ -694,14 +708,17 @@ def print_done(title: str, detail: str = "") -> None:
 
 
 def print_warn(title: str) -> None:
+    """Напечатать предупреждение жёлтым ``!``-префиксом в stdout."""
     out(f"{yellow('!')} {title}")
 
 
 def print_error(title: str) -> None:
+    """Напечатать ошибку красным ``✗``-префиксом в stderr."""
     err(f"{red('✗')} {title}")
 
 
 def print_dim(text: str) -> None:
+    """Напечатать приглушённый текст в stdout."""
     out(dim(text))
 
 
