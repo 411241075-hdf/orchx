@@ -183,7 +183,7 @@ def task_worktree_path(repo_root: Path, task_id: str, subtask_id: str) -> Path:
 
 # Префиксы (относительно корня репо), которые считаются служебными
 # артефактами роя и игнорируются при оценке «значимости» дельты PR.
-# Поддерживаем и новый путь ``orchx/``, и старый ``.orchX/`` — на случай
+# Поддерживаем и новый путь ``orchx/``, и старый ``orchx/`` — на случай
 # существующих веток с историей до миграции.
 ORCHX_ARTEFACT_PREFIXES: tuple[str, ...] = (
     "orchx/runs/",
@@ -191,13 +191,13 @@ ORCHX_ARTEFACT_PREFIXES: tuple[str, ...] = (
     "orchx/results/",
     "orchx/task.md",
     # Legacy (capital-X path до миграции — может встретиться в старых ветках).
-    ".orchX/runs/",
-    ".orchX/_pending/",
-    ".orchX/worktrees/",
-    ".orchX/plan.json",
-    ".orchX/replan-context.md",
-    ".orchX/plan.before-replan-",
-    ".orchX/results/",
+    "orchx/runs/",
+    "orchx/_pending/",
+    "orchx/worktrees/",
+    "orchx/plan.json",
+    "orchx/replan-context.md",
+    "orchx/plan.before-replan-",
+    "orchx/results/",
 )
 
 

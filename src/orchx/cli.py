@@ -61,6 +61,24 @@ def _detect_repo_root() -> Path:
     return Path(out)
 
 
+def _load_orchx_env(repo_root: Path) -> None:
+    """Автозагрузка ``orchx/.env`` (если файл существует и есть python-dotenv).
+
+    Удобно, чтобы пользователь не делал ``source orchx/.env`` руками каждый
+    раз. Существующие переменные окружения не перезаписываются (override=False),
+    так что явный экспорт в shell всегда побеждает файл.
+    """
+    env_path = repo_root / "orchx" / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        # python-dotenv опционален; если его нет — тихо пропускаем.
+        return
+    load_dotenv(env_path, override=False)
+
+
 _VERBOSE: bool = False
 _FILE_HANDLER: logging.FileHandler | None = None
 
@@ -768,6 +786,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     repo_root = _detect_repo_root()
+    # Подгрузим orchx/.env (если есть) до setup_logging — там пока нет
+    # env-зависимостей, но дальше LLMConfig.from_env() уже потребует переменных.
+    _load_orchx_env(repo_root)
     _setup_logging(args.verbose, repo_root)
     handler = {
         "plan": _cmd_plan,
