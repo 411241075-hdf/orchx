@@ -120,22 +120,29 @@ class ChatResponse:
 # ---------------------------------------------------------------------------
 
 
-_THINKING_BUDGET = {
-    "minimal": 1024,
-    "low": 1024,
-    "medium": 4000,
-    "high": 16000,
-    "xhigh": 32000,
-    "max": 32000,
+# Маппинг orchX-effort → Anthropic-effort. orchX использует «xhigh» как
+# обобщённый «максимум reasoning»; для adaptive thinking это `max`.
+_ANTHROPIC_EFFORT_MAP = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "max",
+    "max": "max",
 }
 
 
 def _effort_extra_body(effort: str | None, model: str) -> dict[str, Any]:
     """Сконвертировать orchX-effort в provider-specific extra_body.
 
-    OpenAI o-series → ``reasoning_effort``.
-    Anthropic (Claude через OpenRouter / Proxy) → ``thinking.budget_tokens``.
-    Прочее → пробуем ``reasoning_effort`` (если Proxy не знает — проигнорирует).
+    - **Anthropic Claude 4.6+** (включая Sonnet/Opus) — adaptive thinking
+      (``thinking: {"type": "adaptive"}``) + ``output_config.effort``.
+      Это рекомендованный режим: модель сама решает, когда думать и сколько,
+      `effort` задаёт soft-границу.
+    - **OpenAI o-series** — top-level ``reasoning_effort`` (через extra_body
+      Proxy транслирует в нужный параметр).
+    - **Прочее** — `reasoning_effort` как fallback; если Proxy не знает —
+      проигнорирует.
     """
     if not effort:
         return {}
@@ -149,8 +156,11 @@ def _effort_extra_body(effort: str | None, model: str) -> dict[str, Any]:
     if is_openai_o:
         return {"reasoning_effort": effort}
     if is_anthropic:
-        budget = _THINKING_BUDGET.get(effort, 16000)
-        return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+        ant_effort = _ANTHROPIC_EFFORT_MAP.get(effort, "high")
+        return {
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": ant_effort},
+        }
     return {"reasoning_effort": effort}
 
 
