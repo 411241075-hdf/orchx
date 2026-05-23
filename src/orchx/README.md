@@ -2,12 +2,6 @@
 
 Реализация концепции «рой агентов»: standalone Python-диспетчер декомпозирует задачу через `orchX-planner`, спавнит N независимых in-process воркеров в изолированных git worktree-ах, проверяет acceptance, мерджит результаты в интеграционную ветку и **всегда открывает GitHub PR**. Решение мержить PR — за человеком; рой никогда не пушит в `main` напрямую.
 
-> **orchX полностью независим от Kilo CLI.** Воркеры — это не subprocess'ы
-> kilo, а корутины внутри диспетчера; они говорят с LLM напрямую через
-> OpenAI-совместимый Proxy. Файлы `.kilo/agent/orchX-*.md` используются
-> как plain markdown — оттуда тянутся системные промпты и per-agent
-> permissions, kilo-runtime для этого не нужен.
-
 Подходит и для маленьких задач (`Реализуй компонент X`), и для больших ТЗ из `docs/tasks/*.md` — для последних planner автоматически разбивает работу на фазы с checkpoint'ами, а оркестратор перепланирует остаток при провале.
 
 ## Архитектура
@@ -62,7 +56,7 @@ Planner сам выбирает формат на основе размера з
 
 ## Установка
 
-orchX поставляется как Python-пакет `orchx` в этом репо. Никакого Kilo CLI / `KILO_BIN` / npm не требуется.
+orchX поставляется как Python-пакет `orchx` в этом репо.
 
 ```bash
 # 1. Поставить рой и его deps (openai-SDK, PyYAML) в venv проекта.
@@ -85,13 +79,13 @@ brew install gh && gh auth login
 
 ### Опциональные env
 
-| Переменная                | Что задаёт                                             |
-| ------------------------- | ------------------------------------------------------ |
-| `ORCHX_PLANNER_MODEL`     | Override модели для роли planner (по умолч. `ORCHX_MODEL`). |
-| `ORCHX_REVIEWER_MODEL`    | То же для reviewer.                                    |
-| `ORCHX_DEBUGGER_MODEL`    | То же для debugger.                                    |
-| `ORCHX_MERGER_MODEL`      | То же для merger.                                      |
-| `ORCHX_TIMEOUT_S`         | HTTP-таймаут на один запрос к Proxy (default 600s).    |
+| Переменная             | Что задаёт                                                  |
+| ---------------------- | ----------------------------------------------------------- |
+| `ORCHX_PLANNER_MODEL`  | Override модели для роли planner (по умолч. `ORCHX_MODEL`). |
+| `ORCHX_REVIEWER_MODEL` | То же для reviewer.                                         |
+| `ORCHX_DEBUGGER_MODEL` | То же для debugger.                                         |
+| `ORCHX_MERGER_MODEL`   | То же для merger.                                           |
+| `ORCHX_TIMEOUT_S`      | HTTP-таймаут на один запрос к Proxy (default 600s).         |
 
 Effort и поведенческие настройки — через CLI-флаги (`--effort`, `--reviewer-effort`, ...).
 
