@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://5stars.local/orchX/result.schema.json",
+  "title": "orchX Task Result",
+  "description": "Контракт между worker-агентом и диспетчером. Записывается worker'ом в .orchx/results/<task_id>.json внутри своего worktree.",
+  "type": "object",
+  "required": ["task_id", "status", "artifacts", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["success", "partial", "failed"],
+      "description": "success — все цели достигнуты, acceptance готовы к проверке. partial — часть сделана, но часть требует ручного решения (см. notes). failed — задача не выполнима без вмешательства."
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Список путей файлов, созданных или изменённых задачей. Относительно корня worktree."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Свободный текст: что сделано, какие компромиссы, что осталось. Читается debugger'ом и reviewer'ом."
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Опциональные метрики (lines_changed, tokens, и т.п.)."
+    },
+    "needs_followup": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/FollowupSuggestion" },
+      "default": [],
+      "description": "Подсказки worker'а диспетчеру: какие задачи он рекомендует добавить в DAG (например, написать тесты к тому, что только что реализовано)."
+    }
+  },
+  "$defs": {
+    "FollowupSuggestion": {
+      "type": "object",
+      "required": ["agent", "goal"],
+      "additionalProperties": false,
+      "properties": {
+        "agent": { "type": "string" },
+        "goal": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}
