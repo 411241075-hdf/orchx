@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://5stars.local/orchX/result.schema.json",
   "title": "orchX Task Result",
-  "description": "Контракт между worker-агентом и диспетчером. Записывается worker'ом в .orchx/results/<task_id>.json внутри своего worktree.",
+  "description": "Контракт между worker-агентом и диспетчером. Записывается worker'ом в orchx/results/<task_id>.json внутри своего worktree.",
   "type": "object",
   "required": ["task_id", "status", "artifacts", "notes"],
   "additionalProperties": false,

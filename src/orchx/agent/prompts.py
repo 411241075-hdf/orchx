@@ -47,7 +47,7 @@ def build_system_prompt(
         f"{describe_permissions(spec.permissions)}\n"
         f"\n"
         f"# Task contract\n"
-        f"Your task contract is in `.orchx/task.md` inside the working "
+        f"Your task contract is in `orchx/task.md` inside the working "
         f"directory. Read it first. Write your final result to the JSON path "
         f"it specifies. After writing, finish with the short reply that the "
         f"role section instructs (e.g. `done` for implementer/tester, "

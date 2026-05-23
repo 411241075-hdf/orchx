@@ -68,13 +68,13 @@ def test_edit_path_gating_specific_wins_over_wildcard() -> None:
         {
             "edit": {
                 "*": "deny",
-                ".orchx/_pending/plan.json": "allow",
-                ".orchx/runs/*/plan.json": "allow",
+                "orchx/_pending/plan.json": "allow",
+                "orchx/runs/*/plan.json": "allow",
             }
         }
     )
-    assert p.edit_allowed(".orchx/_pending/plan.json") is True
-    assert p.edit_allowed(".orchx/runs/foo-bar/plan.json") is True
+    assert p.edit_allowed("orchx/_pending/plan.json") is True
+    assert p.edit_allowed("orchx/runs/foo-bar/plan.json") is True
     assert p.edit_allowed("backend/foo.py") is False
 
 

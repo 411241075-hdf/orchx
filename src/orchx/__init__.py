@@ -7,7 +7,7 @@
 - :mod:`orchx.agent` — in-process воркер, читающий ``.kilo/agent/orchX-*.md``
   и общающийся с LLM напрямую через OpenAI-совместимый Proxy.
 
-Старый ``.orchX/dispatcher/`` мигрировал сюда; ``.orchx/`` в корне репо
+Старый ``.orchX/dispatcher/`` мигрировал сюда; ``orchx/`` в корне репо
 теперь — runtime data dir (логи, runs, _pending). Схемы и шаблоны переехали
 внутрь пакета (``orchx/schemas/``).
 """

@@ -69,7 +69,7 @@ async def run_agent(
             резолвятся отсюда.
         repo_root: Корень репозитория (для info-строки в system-prompt'е).
         user_prompt: ``user``-сообщение от диспетчера. Обычно короткое
-            «прочитай ``.orchx/task.md`` и сделай задачу».
+            «прочитай ``orchx/task.md`` и сделай задачу».
         llm: Базовый LLM-клиент. Внутри вызовем ``llm.for_role(role, effort=...)``
             чтобы поднять per-role override модели/effort'а.
         effort: Reasoning-effort (``low|medium|high|xhigh``). ``None`` → не

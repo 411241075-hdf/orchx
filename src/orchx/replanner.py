@@ -8,7 +8,7 @@
 
 1. Оркестратор собирает контекст провала (упавшие задачи + их причины +
    успешные фазы + оригинальный план + spec_files).
-2. Replanner записывает контекст в ``.orchx/runs/<task_id>/replan-context.md``
+2. Replanner записывает контекст в ``orchx/runs/<task_id>/replan-context.md``
    — человеко-читаемый бриф для planner'а.
 3. Запускает in-process воркера ``planner`` со специальной инструкцией
    «прочитай runs/<task_id>/replan-context.md и перепиши runs/<task_id>/plan.json».
@@ -143,7 +143,7 @@ def render_replan_context(ctx: ReplanContext) -> str:
     parts.append("")
     parts.append(
         "1. Перечитай `spec_files` (если есть) и пойми, что именно провалилось.\n"
-        f"2. Перепиши `.orchx/runs/{ctx.plan.task_id}/plan.json`:\n"
+        f"2. Перепиши `orchx/runs/{ctx.plan.task_id}/plan.json`:\n"
         "   - Сохрани оригинальный `task_id`.\n"
         "   - **Не включай уже завершённые фазы** — их код уже в integration ветке.\n"
         "   - Переразбей упавшую фазу на более мелкие задачи, либо найди "
@@ -189,7 +189,7 @@ async def run_replan(
         llm: Базовый LLM-клиент.
         context: Контекст провала для бриф'а planner'у.
         plan_path: Путь к существующему plan.json — будет перезаписан.
-        run_dir: ``.orchx/runs/<task_id>/`` — сюда кладём ``replan-context.md``
+        run_dir: ``orchx/runs/<task_id>/`` — сюда кладём ``replan-context.md``
             и ``plan.before-replan-N.json``.
         log_dir: Куда писать лог planner'а (обычно ``run_dir / "logs"``).
         effort: Reasoning effort planner'а (по умолчанию ``xhigh``).

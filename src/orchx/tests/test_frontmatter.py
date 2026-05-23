@@ -45,8 +45,8 @@ def test_implementer_permissions_match_file() -> None:
 def test_planner_has_path_gated_edit() -> None:
     spec = load_agent_spec("planner", REPO_ROOT)
     # planner может редактировать только plan.json в _pending/runs.
-    assert spec.permissions.edit_allowed(".orchx/_pending/plan.json") is True
-    assert spec.permissions.edit_allowed(".orchx/runs/abc/plan.json") is True
+    assert spec.permissions.edit_allowed("orchx/_pending/plan.json") is True
+    assert spec.permissions.edit_allowed("orchx/runs/abc/plan.json") is True
     assert spec.permissions.edit_allowed("backend/main.py") is False
 
 

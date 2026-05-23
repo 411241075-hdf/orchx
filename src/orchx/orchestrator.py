@@ -169,8 +169,8 @@ class OrchXContext:
     repo_root: Path
     plan: Plan
     config: OrchXConfig
-    run_dir: Path  # .orchx/runs/<task_id>/
-    worktrees_root: Path  # .orchx/runs/<task_id>/worktrees/
+    run_dir: Path  # orchx/runs/<task_id>/
+    worktrees_root: Path  # orchx/runs/<task_id>/worktrees/
     integration_branch: str
     integration_worktree: Path
     log_file: Path
@@ -402,10 +402,10 @@ def _write_task_artifacts(
     Returns:
         Путь к task.md внутри worktree.
     """
-    orchX_dir = state.worktree_path / ".orchx"
+    orchX_dir = state.worktree_path / "orchx"
     orchX_dir.mkdir(parents=True, exist_ok=True)
     (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
-    result_path_rel = f".orchx/results/{state.spec.id}.json"
+    result_path_rel = f"orchx/results/{state.spec.id}.json"
     task_md_content = runner.render_task_md(
         template=ctx.task_template,
         task=state.spec,
@@ -423,7 +423,7 @@ def _write_task_artifacts(
 def _build_worker_prompt() -> str:
     """Короткое user-сообщение для воркера — всё содержательное в task.md."""
     return (
-        "Read .orchx/task.md carefully and execute it as an orchX worker. "
+        "Read orchx/task.md carefully and execute it as an orchX worker. "
         "Write the result JSON to the path specified in the task file. "
         "Do not exceed the allowed file scope. Finish with a short 'done' line."
     )
@@ -764,10 +764,10 @@ async def _resolve_merge_conflict(
         return False
 
     merger_id = f"merger__{state.spec.id}"
-    orchX_dir = ctx.integration_worktree / ".orchx"
+    orchX_dir = ctx.integration_worktree / "orchx"
     orchX_dir.mkdir(parents=True, exist_ok=True)
     (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
-    result_path_rel = f".orchx/results/{merger_id}.json"
+    result_path_rel = f"orchx/results/{merger_id}.json"
     result_path = ctx.integration_worktree / result_path_rel
 
     task_md = _render_merger_task_md(
@@ -1037,7 +1037,7 @@ def _spec_from_followup(
             AcceptanceCheck(
                 type="file_exists",
                 description=f"followup {new_id} produced its result.json",
-                path=f".orchx/results/{new_id}.json",
+                path=f"orchx/results/{new_id}.json",
             ),
         ),
         max_retries=0,
@@ -1228,14 +1228,14 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
             f"Review the full integration diff between {ctx.plan.base_branch} "
             f"and {ctx.integration_branch}. Report issues; do NOT modify code."
         ),
-        inputs=(".orchx/plan.json",),
+        inputs=("orchx/plan.json",),
         outputs=(),
-        file_scope=(".orchx/results/**",),
+        file_scope=("orchx/results/**",),
         acceptance=(
             AcceptanceCheck(
                 type="file_exists",
                 description="reviewer wrote result.json",
-                path=f".orchx/results/review__{ctx.plan.task_id}.json",
+                path=f"orchx/results/review__{ctx.plan.task_id}.json",
             ),
         ),
         max_retries=0,
@@ -1248,15 +1248,15 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
     _orchX_log(ctx, f"auto-review starting on {review_branch}")
 
     # Подготовить task.md и контекст ревью.
-    orchX_dir = review_wt / ".orchx"
+    orchX_dir = review_wt / "orchx"
     orchX_dir.mkdir(parents=True, exist_ok=True)
     (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
-    result_path_rel = f".orchx/results/{review_spec.id}.json"
+    result_path_rel = f"orchx/results/{review_spec.id}.json"
     review_state.result_path = review_wt / result_path_rel
 
     # Скопируем активный план и журнал прогона прямо в worktree reviewer'а,
     # чтобы он мог читать их по относительным путям от своего cwd. Сами
-    # runtime-артефакты живут в `.orchx/runs/<task_id>/` корня репо, но из
+    # runtime-артефакты живут в `orchx/runs/<task_id>/` корня репо, но из
     # worktree их не видно (это отдельный checkout).
     if ctx.plan_path is not None and ctx.plan_path.exists():
         (orchX_dir / "plan.json").write_text(
@@ -1355,7 +1355,7 @@ def _render_reviewer_task_md(
 
 ## Что проверять
 
-- Соответствие диффа целям из `.orchx/plan.json`.
+- Соответствие диффа целям из `orchx/plan.json`.
 - Согласованность между задачами (контракты, имена, типы).
 - Безопасность: утечки секретов, инъекции, path traversal, hard-coded credentials.
 - Стилевые нарушения и нарушения `.kilo/INSTRUCTIONS.md`.
@@ -1386,7 +1386,7 @@ def _render_reviewer_task_md(
 
 ## Запрещено
 
-- Любые правки кода. `edit` ограничен только `.orchx/results/**`.
+- Любые правки кода. `edit` ограничен только `orchx/results/**`.
 - Запуск тестов, билдов, форматтеров — это уже сделали воркеры.
 - Вызов Task tool / new_task.
 """

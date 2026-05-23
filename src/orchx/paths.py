@@ -1,14 +1,14 @@
 """Единая раскладка runtime-артефактов orchX.
 
 Контракт: всё, что относится к одному прогону роя (одному ``task_id``),
-живёт в ``.orchx/runs/<task_id>/`` корня репозитория. Воркеры по-прежнему
-пишут свои ``.orchx/task.md`` и ``.orchx/results/<id>.json`` ВНУТРИ своего
+живёт в ``orchx/runs/<task_id>/`` корня репозитория. Воркеры по-прежнему
+пишут свои ``orchx/task.md`` и ``orchx/results/<id>.json`` ВНУТРИ своего
 изолированного worktree — это не корень репозитория, а отдельный checkout,
 поэтому путь не конфликтует с раскладкой основного репо.
 
 Структура одного запуска::
 
-    .orchx/runs/<task_id>/
+    orchx/runs/<task_id>/
     ├── plan.json                    # активный план (после replan'а — последняя версия)
     ├── plan.before-replan-N.json    # бэкапы плана перед N-м replan'ом
     ├── replan-context.md            # бриф для planner'а при replan'е
@@ -26,10 +26,10 @@
         ├── _review/                 # рабочая зона reviewer'а
         └── <subtask_id>/            # worktree-ы воркеров
 
-Кроме того, ``.orchx/_pending/`` — staging-каталог для этапа `orchx plan`,
+Кроме того, ``orchx/_pending/`` — staging-каталог для этапа `orchx plan`,
 когда task_id ещё не известен (planner'у негде взять его до записи плана).
 После успешного планирования CLI перекладывает содержимое в
-``.orchx/runs/<task_id>/``.
+``orchx/runs/<task_id>/``.
 
 JSON-схемы и шаблон task.md шипятся ВНУТРИ Python-пакета (``orchx/schemas/``),
 не в runtime-каталоге — это код, а не данные.
@@ -41,7 +41,7 @@ import shutil
 from pathlib import Path
 
 # Имя runtime-каталога в корне репо. Скрытое (с точкой), всегда gitignored.
-RUNTIME_DIR_NAME = ".orchx"
+RUNTIME_DIR_NAME = "orchx"
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ def task_template_path() -> Path:
 
 
 def orchx_root(repo_root: Path) -> Path:
-    """``.orchx/`` в корне репозитория (runtime-каталог)."""
+    """``orchx/`` в корне репозитория (runtime-каталог)."""
     return repo_root / RUNTIME_DIR_NAME
 
 
@@ -106,7 +106,7 @@ def runs_dir(repo_root: Path) -> Path:
 
 
 def run_dir(repo_root: Path, task_id: str) -> Path:
-    """`.orchx/runs/<task_id>/`."""
+    """`orchx/runs/<task_id>/`."""
     return runs_dir(repo_root) / task_id
 
 
@@ -183,13 +183,13 @@ def task_worktree_path(repo_root: Path, task_id: str, subtask_id: str) -> Path:
 
 # Префиксы (относительно корня репо), которые считаются служебными
 # артефактами роя и игнорируются при оценке «значимости» дельты PR.
-# Поддерживаем и новый путь ``.orchx/``, и старый ``.orchX/`` — на случай
+# Поддерживаем и новый путь ``orchx/``, и старый ``.orchX/`` — на случай
 # существующих веток с историей до миграции.
 ORCHX_ARTEFACT_PREFIXES: tuple[str, ...] = (
-    ".orchx/runs/",
-    ".orchx/_pending/",
-    ".orchx/results/",
-    ".orchx/task.md",
+    "orchx/runs/",
+    "orchx/_pending/",
+    "orchx/results/",
+    "orchx/task.md",
     # Legacy (capital-X path до миграции — может встретиться в старых ветках).
     ".orchX/runs/",
     ".orchX/_pending/",
@@ -202,7 +202,7 @@ ORCHX_ARTEFACT_PREFIXES: tuple[str, ...] = (
 
 
 def cleanup_pending(repo_root: Path) -> None:
-    """Удалить ``.orchx/_pending/`` целиком (после успешного промоушена)."""
+    """Удалить ``orchx/_pending/`` целиком (после успешного промоушена)."""
     p = pending_dir(repo_root)
     if p.exists():
         shutil.rmtree(p, ignore_errors=True)

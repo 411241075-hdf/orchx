@@ -82,9 +82,9 @@ def _setup_logging(verbose: bool, repo_root: Path) -> None:
     кадры. Поэтому все WARNING/INFO-логи диспетчера направляем в файл.
 
     На старте мы ещё не знаем ``task_id`` (planner его только генерирует),
-    поэтому пишем в ``.orchx/_pending/dispatcher.log``. Как только task_id
+    поэтому пишем в ``orchx/_pending/dispatcher.log``. Как только task_id
     известен — вызывается :func:`_attach_run_log`, который перенаправляет
-    последующие записи в ``.orchx/runs/<task_id>/dispatcher.log`` и
+    последующие записи в ``orchx/runs/<task_id>/dispatcher.log`` и
     переносит туда уже накопленный pending-лог.
 
     С ``-v/--verbose`` лог становится подробным (DEBUG) и дублируется в
@@ -120,7 +120,7 @@ def _setup_logging(verbose: bool, repo_root: Path) -> None:
 
 
 def _attach_run_log(repo_root: Path, task_id: str) -> None:
-    """Перенаправить root logger на ``.orchx/runs/<task_id>/dispatcher.log``.
+    """Перенаправить root logger на ``orchx/runs/<task_id>/dispatcher.log``.
 
     Перенесёт уже записанные строки из ``_pending/dispatcher.log`` в новый
     файл (append), чтобы не потерять контекст начала прогона.
@@ -338,12 +338,12 @@ async def _run_planner_quiet(
 
 
 async def _cmd_plan(args: argparse.Namespace) -> int:
-    """Запустить orchX-planner и записать план в ``.orchx/runs/<task_id>/plan.json``.
+    """Запустить orchX-planner и записать план в ``orchx/runs/<task_id>/plan.json``.
 
     Поскольку до запуска planner'а task_id ещё неизвестен, planner пишет
-    промежуточный план в ``.orchx/_pending/plan.json``. После успешного
+    промежуточный план в ``orchx/_pending/plan.json``. После успешного
     планирования cli читает task_id из плана и перемещает всё в
-    ``.orchx/runs/<task_id>/`` (полностью затирая старую папку с тем же
+    ``orchx/runs/<task_id>/`` (полностью затирая старую папку с тем же
     task_id, если она была).
     """
     repo_root = _detect_repo_root()
@@ -365,7 +365,7 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
 
     prompt = (
         f"User task:\n\n{args.task}\n\n"
-        "Build an orchX plan and write it to .orchx/_pending/plan.json. "
+        "Build an orchX plan and write it to orchx/_pending/plan.json. "
         "Follow the planner agent rules strictly."
     )
 
@@ -385,7 +385,7 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
         tui.print_dim(f"  full log: {pending_log}")
         return rc
     if not pending_plan.exists():
-        tui.print_error("Planner finished but did not write .orchx/_pending/plan.json.")
+        tui.print_error("Planner finished but did not write orchx/_pending/plan.json.")
         tui.print_dim(f"  full log: {pending_log}")
         return 1
 
@@ -512,8 +512,8 @@ def _resolve_plan_path(repo_root: Path, explicit: str | None) -> Path | None:
     Порядок:
 
     1. Явный путь, если задан (резолвим как абсолютный).
-    2. Самый свежий ``.orchx/runs/<task_id>/plan.json`` по времени модификации.
-    3. Legacy ``.orchx/plan.json`` (для совместимости со старыми скриптами).
+    2. Самый свежий ``orchx/runs/<task_id>/plan.json`` по времени модификации.
+    3. Legacy ``orchx/plan.json`` (для совместимости со старыми скриптами).
 
     Возвращает ``None``, если не нашли ничего.
     """
@@ -748,7 +748,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Путь к plan.json. По умолчанию — самый свежий "
-            ".orchx/runs/<task_id>/plan.json (или legacy .orchx/plan.json)."
+            "orchx/runs/<task_id>/plan.json (или legacy orchx/plan.json)."
         ),
     )
     _add_behavior_flags(run_p)

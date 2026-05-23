@@ -70,7 +70,7 @@
 - Ты на ветке `{{branch}}`, отделённой от интеграционной ветки роя.
 - Незакоммиченные правки соседей тебе не видны.
 - Если задача зависела от других, их результаты уже смержены в твою ветку.
-  Их `result.json` лежат в `.orchx/results/`. Прочитай их перед началом работы.
+  Их `result.json` лежат в `orchx/results/`. Прочитай их перед началом работы.
   </orchX_context>
 
 <tooling>
@@ -87,7 +87,7 @@ MCP-серверы (`5stars_*`, `finland_*`, `turbocards_*`) запускают 
 
 - `git push`, `git rebase`, `git reset --hard`
 - удаление или переименование веток
-- правки `kilo.json`, `.kilo/agent/`, `.orchx/plan.json`, `.orchx/log`
+- правки `kilo.json`, `.kilo/agent/`, `orchx/plan.json`, `orchx/log`
 - запуск других kilo-процессов или работа в чужих worktrees
 - создание подзадач через Task tool / new_task
 
