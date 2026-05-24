@@ -24,7 +24,6 @@ from pathlib import Path
 
 from . import Tool, ToolContext, ToolResult
 
-
 _TRUNCATION_LIMIT = 50_000  # ~50KB на каждый из stdout/stderr.
 
 
@@ -154,7 +153,7 @@ class BashTool(Tool):
             try:
                 data = await asyncio.wait_for(t, timeout=2.0)
                 return data if isinstance(data, bytes) else b""
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError, asyncio.CancelledError:
                 t.cancel()
                 try:
                     data = await t

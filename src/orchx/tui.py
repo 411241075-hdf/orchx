@@ -650,9 +650,7 @@ def print_run_summary(summary: dict) -> None:
         calls = metrics.get("total_llm_calls", 0)
         compactions = metrics.get("total_compactions", 0)
         if tokens or calls:
-            metrics_str = (
-                f"{tokens:,} tokens · {calls} llm calls"
-            )
+            metrics_str = f"{tokens:,} tokens · {calls} llm calls"
             if compactions:
                 metrics_str += f" · {compactions} compactions"
             kv("metrics", metrics_str)

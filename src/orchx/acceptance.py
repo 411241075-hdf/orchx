@@ -276,7 +276,7 @@ async def _run_command(check: AcceptanceCheck, cwd: Path) -> CheckOutcome:
     async def _safe_await(t: asyncio.Task[bytes]) -> bytes:
         try:
             return await asyncio.wait_for(t, timeout=2.0)
-        except (TimeoutError, asyncio.CancelledError):
+        except TimeoutError, asyncio.CancelledError:
             t.cancel()
             try:
                 return await t

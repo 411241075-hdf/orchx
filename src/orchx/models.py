@@ -607,9 +607,7 @@ def _parse_review_report(raw: Any) -> ReviewReport | None:
         category = f.get("category")
         description = f.get("description")
         if severity not in VALID_SEVERITIES:
-            log.warning(
-                "review finding #%d skipped: invalid severity %r", i, severity
-            )
+            log.warning("review finding #%d skipped: invalid severity %r", i, severity)
             continue
         if not isinstance(description, str) or not description.strip():
             log.warning("review finding #%d skipped: empty description", i)
@@ -619,11 +617,7 @@ def _parse_review_report(raw: Any) -> ReviewReport | None:
         if verdict is not None and verdict not in VALID_VERIFIER_VERDICTS:
             verdict = None
         line_val = f.get("line")
-        line = (
-            int(line_val)
-            if isinstance(line_val, int) and line_val >= 1
-            else None
-        )
+        line = int(line_val) if isinstance(line_val, int) and line_val >= 1 else None
         parsed.append(
             ReviewFinding(
                 severity=severity,  # type: ignore[arg-type]

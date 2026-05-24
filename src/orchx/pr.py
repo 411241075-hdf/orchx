@@ -75,7 +75,7 @@ async def _git_credential_token(*, cwd: Path) -> str | None:
         stdout_b, _ = await asyncio.wait_for(
             proc.communicate(input=helper_input), timeout=5.0
         )
-    except (TimeoutError, OSError):
+    except TimeoutError, OSError:
         return None
     if proc.returncode != 0:
         return None
@@ -179,7 +179,7 @@ async def push_and_open_pr(
     title: str,
     body: str,
     skip_if_empty: bool = True,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     """Запушить интеграционную ветку и открыть PR в base_branch.
 
     Args:
@@ -539,9 +539,7 @@ def render_pr_body(summary: dict) -> str:
     if metrics.get("total_llm_calls"):
         lines.append(f"- **LLM-вызовов:** {metrics['total_llm_calls']}")
     if metrics.get("total_compactions"):
-        lines.append(
-            f"- **History compactions:** {metrics['total_compactions']}"
-        )
+        lines.append(f"- **History compactions:** {metrics['total_compactions']}")
     if summary.get("aborted"):
         lines.append(f"- **Прерван:** {summary.get('abort_reason') or 'да'}")
     if summary.get("halt_reason"):
@@ -682,16 +680,20 @@ def render_pr_body(summary: dict) -> str:
                     file_part = f"`{file_part}:{f['line']}`"
                 elif file_part != "—":
                     file_part = f"`{file_part}`"
-                desc = (f.get("description") or "").replace("|", "\\|").replace("\n", " ")
+                desc = (
+                    (f.get("description") or "").replace("|", "\\|").replace("\n", " ")
+                )
                 if len(desc) > 300:
                     desc = desc[:297] + "..."
-                scen = (f.get("failure_scenario") or "").replace("|", "\\|").replace("\n", " ")
+                scen = (
+                    (f.get("failure_scenario") or "")
+                    .replace("|", "\\|")
+                    .replace("\n", " ")
+                )
                 if len(scen) > 300:
                     scen = scen[:297] + "..."
                 cat = f.get("category") or "other"
-                lines.append(
-                    f"| {file_part} | {cat} | {desc} | {scen or '—'} |"
-                )
+                lines.append(f"| {file_part} | {cat} | {desc} | {scen or '—'} |")
             lines.append("")
 
     lines += [

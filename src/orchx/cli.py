@@ -519,7 +519,10 @@ async def _wipe_run_dir(repo_root: Path, task_id: str, run_dir: Path) -> None:
     # без plan.json, но git справится сам через шаблон). Используем worktree.git.
     try:
         await worktree._git(  # type: ignore[attr-defined]
-            repo_root, "branch", "-D", *await _list_worker_branches(repo_root, task_id)
+            "branch",
+            "-D",
+            *await _list_worker_branches(repo_root, task_id),
+            cwd=repo_root,
         )
     except Exception:  # noqa: BLE001
         pass
@@ -830,9 +833,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "task_id",
         nargs="?",
         default=None,
-        help=(
-            "task_id run'а. Если не задан — берём самый свежий по mtime."
-        ),
+        help=("task_id run'а. Если не задан — берём самый свежий по mtime."),
     )
     logs_p.add_argument(
         "--task",

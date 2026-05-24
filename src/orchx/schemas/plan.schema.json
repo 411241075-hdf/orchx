@@ -31,7 +31,12 @@
       "additionalProperties": false,
       "description": "Жёсткие лимиты на весь рой. Диспетчер прерывает выполнение при превышении.",
       "properties": {
-        "max_parallel": { "type": "integer", "minimum": 1, "maximum": 32, "default": 6 },
+        "max_parallel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 6
+        },
         "max_wall_seconds": {
           "type": "integer",
           "minimum": 60,
@@ -103,7 +108,14 @@
     },
     "Task": {
       "type": "object",
-      "required": ["id", "agent", "depends_on", "goal", "file_scope", "acceptance"],
+      "required": [
+        "id",
+        "agent",
+        "depends_on",
+        "goal",
+        "file_scope",
+        "acceptance"
+      ],
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -156,8 +168,17 @@
           "items": { "$ref": "#/$defs/AcceptanceCheck" },
           "description": "Проверки, которые должны пройти, чтобы задача считалась успешной. Все обязательные."
         },
-        "max_retries": { "type": "integer", "minimum": 0, "maximum": 5, "default": 1 },
-        "timeout_seconds": { "type": "integer", "minimum": 60, "default": 1800 },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "default": 1800
+        },
         "model": {
           "type": "string",
           "description": "Опциональный override модели для этой задачи. Формат provider/model. Если не задано — используется дефолт ORCHX_MODEL."
@@ -176,8 +197,15 @@
           "required": ["type", "command"],
           "properties": {
             "type": { "const": "command" },
-            "command": { "type": "string", "description": "Shell-команда; exit 0 = pass." },
-            "timeout_seconds": { "type": "integer", "minimum": 1, "default": 300 },
+            "command": {
+              "type": "string",
+              "description": "Shell-команда; exit 0 = pass."
+            },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 300
+            },
             "description": { "type": "string" }
           },
           "additionalProperties": false
@@ -196,7 +224,10 @@
           "properties": {
             "type": { "const": "file_contains" },
             "path": { "type": "string" },
-            "pattern": { "type": "string", "description": "Python-regex, проверяется через re.search." },
+            "pattern": {
+              "type": "string",
+              "description": "Python-regex, проверяется через re.search."
+            },
             "description": { "type": "string" }
           },
           "additionalProperties": false

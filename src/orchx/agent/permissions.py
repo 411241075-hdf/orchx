@@ -333,9 +333,7 @@ class Permissions:
                         allowed=action == "allow",
                         pattern=pattern,
                         prefix=prefix,
-                        reason=(
-                            f"prefix={prefix!r} matched wildcard '*' → {action}"
-                        ),
+                        reason=(f"prefix={prefix!r} matched wildcard '*' → {action}"),
                     )
                 continue
             if prefix == norm or fnmatch.fnmatchcase(prefix, norm):

@@ -87,7 +87,7 @@ def _python_grep(
                             out.append(f"{rel}:{lineno}:{line.rstrip()}")
                             if len(out) >= 5000:
                                 return out
-            except (OSError, UnicodeDecodeError):
+            except OSError, UnicodeDecodeError:
                 continue
     return out
 
