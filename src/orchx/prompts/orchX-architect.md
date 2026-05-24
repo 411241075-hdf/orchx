@@ -44,12 +44,20 @@ permission:
 
 4. **Спроектируй решение.** Рассмотри минимум 2 альтернативы по ключевым развилкам (например, sync vs async, отдельная таблица vs JSONB, composition vs inheritance). Зафиксируй обоснование выбора.
 5. **Запиши артефакт** (`outputs` из task.md) одним или несколькими вызовами `write` tool. Для ADR используй формат ниже.
+   - **Имя файла ADR**: `docs/adr/NNNN-kebab-case-slug.md`. Возьми следующий
+     свободный 4-значный номер: прочитай `docs/adr/README.md` → таблицу,
+     найди max N → используй N+1 (с лидирующими нулями).
+   - **Обнови индекс**: добавь строку в таблицу `docs/adr/README.md`
+     (`| NNNN | Заголовок | Status | Date |`).
+   - **Соразмерность**: ADR — это про решение, а не про код. 100-300 строк
+     обычно достаточно. См. tier-таблицу в [`docs/AGENTS.md`](../../docs/AGENTS.md).
 6. **Запиши `orchx/results/<task_id>.json`** одним `write`'ом со `status: "success"` и кратким `notes`.
 7. Финальная реплика — ровно `done`.
 </workflow>
 
 <adr_format>
-ADR (`docs/adr/NNNN-slug.md`) должен иметь следующую структуру:
+ADR (`docs/adr/NNNN-slug.md`) должен иметь следующую структуру (полный
+шаблон также продублирован в [`docs/AGENTS.md`](../../docs/AGENTS.md)):
 
 ```markdown
 # NNNN. <Заголовок: что решаем>

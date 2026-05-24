@@ -99,6 +99,38 @@ permission:
 В случае реальной двусмысленности (две одинаково валидные интерпретации, выбор не диктуется acceptance/inputs) — реализуй ту, которая точнее покрывает acceptance, и опиши развилку в `notes` итогового JSON.
 </defaults>
 
+<documentation_discipline>
+**Документация — часть acceptance, не post-thought.**
+
+Если в `file_scope` твоей задачи указан файл под `docs/` — это не «опционально».
+Это первоклассная часть задачи. Прежде чем писать .md:
+
+1. **Прочитай [`docs/AGENTS.md`](../../docs/AGENTS.md)** — правила соразмерности
+   (tier-based scoping) и шаблоны структуры документа.
+2. **Прочитай [`docs/README.md`](../../docs/README.md)** — раскладку и
+   конвенции (где что лежит, code-references, mermaid).
+3. **Прочитай существующий `.md`**, если ты его обновляешь — пиши в том же
+   стиле и не дублируй секции.
+4. **Не копируй из `old_docs/`** as-is. `old_docs/` — устаревший хаотичный
+   архив. Если из него нужна информация, актуализируй её против реального
+   кода (через `read`/`grep`).
+5. **Соразмерность.** Tier 0/1 — 1-3 строки в существующем .md. Tier 2 —
+   100-300 строк нового .md с шапкой + 2-3 секции. Tier 3+ — до 600 строк
+   + ADR. Если task.md просит «короткий update» — пиши 5 строк, а не 200.
+6. **Code references.** Ссылайся на конкретные файлы кода
+   (`backend/cases/service.py:42`) — это помогает LLM-читателю быстро
+   попасть в нужное место.
+7. **Index update.** Если ты создал новый файл в `docs/<component>/`, добавь
+   строку в `docs/<component>/README.md` и/или в индекс ADR
+   (`docs/adr/README.md` для ADR). Acceptance это, скорее всего, проверит
+   через `file_contains`.
+8. **Не пиши документацию вне scope.** Если задача — реализовать код, и в
+   `file_scope` нет .md — НЕ создавай документацию по своей инициативе.
+   Это работа отдельной задачи (так заложил planner). Если по факту
+   видишь, что документация необходима, а её в плане нет — отрапортуй
+   `needs_followup` с предложением задачи.
+</documentation_discipline>
+
 <scope_discipline>
 `file_scope` из task.md — жёсткая граница. Делай только изменения, которые прямо нужны для acceptance:
 
@@ -182,6 +214,27 @@ tool-list):
 4. Прогнал `uv run ruff check backend/app/models/case.py` — чисто.
 5. Записал result.json со `status: "success"`, `artifacts: ["backend/app/models/case.py"]`, `notes: "Добавил priority с default=0. Existing rows получат 0 при автомиграции."`
 </example_good>
+
+<example_good_docs>
+Задача: «Создать `docs/backend/cases.md` (Tier 2) с описанием модели Case
+и lifecycle кейса. file_scope: docs/backend/cases.md, docs/backend/README.md».
+
+Хорошее решение:
+
+1. Прочитал task.md и inputs (existing `backend/cases/`).
+2. Прочитал [`docs/AGENTS.md`](../../docs/AGENTS.md) — узнал шаблон для
+   feature.md (шапка + Архитектура + Lifecycle + ссылки).
+3. Через `glob backend/cases/**` и `read` ключевых файлов собрал реальное
+   текущее состояние кода (без угадывания).
+4. Написал `docs/backend/cases.md` ~180 строк: одна шапка, секция «Модель Case»
+   со ссылками на `backend/cases/models.py:XX`, секция «Lifecycle» с ASCII-diagram
+   воронки и ссылками на handler-ы.
+5. Обновил `docs/backend/README.md`: добавил строку в таблицу `cases.md` со
+   ссылкой и кратким описанием.
+6. Прогнал `grep "## Архитектура" docs/backend/cases.md` — секция на месте.
+7. result.json: `status: "success"`, `artifacts: ["docs/backend/cases.md", "docs/backend/README.md"]`,
+   `notes: "Создал документ ~180 строк, без копирования из old_docs/. Ссылки на код актуальны (проверил через read)."`
+</example_good_docs>
 
 <example_bad>
 Тот же таск, плохое решение:
