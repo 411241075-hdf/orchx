@@ -41,6 +41,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -65,17 +66,31 @@ def _load_orchx_env(repo_root: Path) -> None:
     """Автозагрузка ``orchx/.env`` (если файл существует и есть python-dotenv).
 
     Удобно, чтобы пользователь не делал ``source orchx/.env`` руками каждый
-    раз. Существующие переменные окружения не перезаписываются (override=False),
-    так что явный экспорт в shell всегда побеждает файл.
+    раз. Непустые переменные окружения, выставленные в shell, имеют
+    приоритет над файлом (явный экспорт побеждает). Но **пустые** значения
+    (``""``) трактуются как «не задано» и перезатираются значениями из
+    файла — иначе пустой ``ORCHX_LLM_BASE_URL=``, оставленный в
+    активационном скрипте conda/direnv, маскирует настройки в orchx/.env и
+    приводит к ложному «missing required env vars».
     """
     env_path = repo_root / "orchx" / ".env"
     if not env_path.exists():
         return
     try:
-        from dotenv import load_dotenv
+        from dotenv import dotenv_values, load_dotenv
     except ImportError:
         # python-dotenv опционален; если его нет — тихо пропускаем.
         return
+    # Сначала чистим пустые ORCHX_* в окружении, чтобы они не «победили»
+    # значения из файла при override=False (поведение по умолчанию dotenv).
+    file_vars = dotenv_values(env_path)
+    for key, file_val in file_vars.items():
+        if not file_val:
+            continue
+        shell_val = os.environ.get(key)
+        if shell_val is not None and shell_val.strip() == "":
+            # Пустая строка — фактически «не задано»; пусть файл выставит.
+            os.environ.pop(key, None)
     load_dotenv(env_path, override=False)
 
 
