@@ -62,36 +62,72 @@ def _detect_repo_root() -> Path:
     return Path(out)
 
 
+def _parse_dotenv_file(env_path: Path) -> dict[str, str]:
+    """Минимальный парсер ``.env`` без внешних зависимостей.
+
+    Поддерживает: ``KEY=value``, ``export KEY=value``, инлайн-комментарии
+    после непустого значения, кавычки (одинарные/двойные) вокруг значения,
+    пустые строки и комментарии (``#``). Этого достаточно для формата
+    ``orchx/.env``; если в проекте появятся сложные dotenv-фичи (multiline,
+    подстановка ``${VAR}``), стоит зависеть на ``python-dotenv`` явно.
+    """
+    out: dict[str, str] = {}
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum():
+            continue
+        value = value.strip()
+        # Снять окружающие кавычки одного типа.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        else:
+            # Обрезать инлайн-комментарий после пробела (только для unquoted).
+            hash_idx = value.find(" #")
+            if hash_idx != -1:
+                value = value[:hash_idx].rstrip()
+        out[key] = value
+    return out
+
+
 def _load_orchx_env(repo_root: Path) -> None:
-    """Автозагрузка ``orchx/.env`` (если файл существует и есть python-dotenv).
+    """Автозагрузка ``orchx/.env`` без обязательной зависимости от python-dotenv.
 
     Удобно, чтобы пользователь не делал ``source orchx/.env`` руками каждый
     раз. Непустые переменные окружения, выставленные в shell, имеют
-    приоритет над файлом (явный экспорт побеждает). Но **пустые** значения
-    (``""``) трактуются как «не задано» и перезатираются значениями из
-    файла — иначе пустой ``ORCHX_LLM_BASE_URL=``, оставленный в
-    активационном скрипте conda/direnv, маскирует настройки в orchx/.env и
-    приводит к ложному «missing required env vars».
+    приоритет над файлом (явный экспорт побеждает). Пустые строки в shell
+    трактуются как «не задано» и перезаписываются значениями из файла —
+    иначе пустой ``ORCHX_LLM_BASE_URL=``, оставленный в активационном
+    скрипте conda/direnv, маскирует настройки и приводит к ложному
+    ``missing required env vars``.
+
+    Раньше эта функция требовала ``python-dotenv`` и тихо возвращалась без
+    загрузки, если пакета нет в venv. Это давало contra-intuitive поведение:
+    ``orchx/.env`` лежит на диске и заполнен, но рой падает с
+    ``missing required env vars``. Теперь используем встроенный парсер
+    (``_parse_dotenv_file``) — никакой внешней зависимости.
     """
     env_path = repo_root / "orchx" / ".env"
     if not env_path.exists():
         return
-    try:
-        from dotenv import dotenv_values, load_dotenv
-    except ImportError:
-        # python-dotenv опционален; если его нет — тихо пропускаем.
-        return
-    # Сначала чистим пустые ORCHX_* в окружении, чтобы они не «победили»
-    # значения из файла при override=False (поведение по умолчанию dotenv).
-    file_vars = dotenv_values(env_path)
+    file_vars = _parse_dotenv_file(env_path)
     for key, file_val in file_vars.items():
         if not file_val:
             continue
         shell_val = os.environ.get(key)
-        if shell_val is not None and shell_val.strip() == "":
-            # Пустая строка — фактически «не задано»; пусть файл выставит.
-            os.environ.pop(key, None)
-    load_dotenv(env_path, override=False)
+        if shell_val is None or shell_val.strip() == "":
+            os.environ[key] = file_val
 
 
 _VERBOSE: bool = False
