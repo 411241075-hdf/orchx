@@ -303,6 +303,17 @@ async def _initialize_context(
 
     _initialize_task_states_from_plan(ctx, plan)
 
+    _progress("cleaning macOS '<file> N' duplicates from .git/")
+    _purged = worktree.cleanup_git_internal_duplicates(repo_root)
+    if _purged:
+        _orchX_log(
+            ctx,
+            f"purged {len(_purged)} macOS-duplicate entries from .git/ "
+            f"(stale `<file> N` artefacts from previous runs that would have "
+            f"caused `bad object refs/heads/...` errors): {_purged[:5]}"
+            + ("..." if len(_purged) > 5 else ""),
+        )
+
     _progress("checking working tree is clean")
     if config.auto_stash:
         stash_label = f"pre-orchX {plan.task_id}"
@@ -452,16 +463,95 @@ async def _prepare_worktree_for_task(ctx: OrchXContext, state: TaskState) -> Non
 
     Зависимости задачи к этому моменту уже смержены в интеграционную ветку,
     значит worktree получит их автоматически.
+
+    Между attempt'ами worktree пересоздаётся ПОЛНОСТЬЮ от свежего ref'а
+    интеграционной ветки. Это важно для debugger-retry: если оригинальный
+    воркер запускался параллельно с соседями, его base_ref был старее, и
+    при retry'е нужен новый снимок (иначе debugger увидит «несуществующий»
+    sibling-код и попробует его восстановить с устаревшего merge-base'а).
     """
     if state.worktree_path.exists():
         await worktree.remove_worktree(ctx.repo_root, state.worktree_path)
     await worktree.delete_branch(ctx.repo_root, state.branch)
+    # Превентивно почистим .git/worktrees/<name>* и refs от macOS-дубликатов,
+    # оставшихся от предыдущего attempt'а или от параллельных воркеров.
+    _purged = worktree.cleanup_git_internal_duplicates(ctx.repo_root)
+    if _purged:
+        _orchX_log(
+            ctx,
+            f"task {state.spec.id} purged {len(_purged)} stale macOS-duplicate "
+            f"entries from .git/ before recreating worktree",
+        )
     await worktree.add_worktree(
         repo_root=ctx.repo_root,
         worktree_path=state.worktree_path,
         branch=state.branch,
         base_ref=ctx.integration_branch,
     )
+
+
+def _build_integration_state_section(ctx: OrchXContext, state: TaskState) -> str:
+    """Сформировать секцию «Integration branch state» для task.md воркера.
+
+    Эта секция КРИТИЧЕСКИ важна для воркеров фаз 2+: они работают в
+    worktree, отделённой от текущего состояния интеграционной ветки.
+    Без этой секции воркер не знает, какие соседние задачи уже смержены и
+    какие глобальные файлы (``backend/webapp.py``, ``backend/api/admin/__init__.py``)
+    уже содержат изменения от соседей. В прошлых прогонах это приводило
+    к молчаливому удалению чужих регистраций роутеров (см. api-admin-db
+    в admin-subdomain run).
+
+    Возвращает:
+        Markdown-блок (без trailing newline) или пустую строку, если
+        соседних задач нет (первая задача первой фазы).
+    """
+    already_merged: list[tuple[str, str]] = []
+    # Собираем все успешные задачи плана, которые ушли в integration к
+    # этому моменту (status=success И merge_sha не None).
+    for s in ctx.states.values():
+        if s.spec.id == state.spec.id:
+            continue
+        if s.status == "success" and s.merge_sha:
+            already_merged.append((s.spec.id, s.spec.goal))
+    if not already_merged:
+        return ""
+    lines: list[str] = [
+        "<integration_branch_state>",
+        "На момент твоего запуска в интеграционную ветку уже смержены",
+        f"следующие задачи (всего {len(already_merged)}). Их код доступен",
+        "в твоём worktree через обычные `read`/`grep`. **НИКОГДА не**",
+        "**удаляй и не перезаписывай результаты этих задач** — твоя",
+        "правка должна быть АДДИТИВНОЙ относительно их состояния.",
+        "",
+        (
+            "Особо внимательно — общие файлы (`backend/webapp.py`,"
+            " `backend/api/admin/__init__.py`, `backend/__init__.py`,"
+            " `frontend/src/App.jsx`, `pyproject.toml`): соседи могли"
+            " уже добавить в них импорты/регистрации. Перед `write`"
+            " на такой файл — `read` его и сохрани все существующие"
+            " import/include_router/routes/exports."
+        ),
+        "",
+        "**Уже смержено:**",
+        "",
+    ]
+    for tid, goal in already_merged[:40]:
+        short_goal = goal[:140] + ("…" if len(goal) > 140 else "")
+        lines.append(f"- `{tid}` — {short_goal}")
+    if len(already_merged) > 40:
+        lines.append(f"- _(+{len(already_merged) - 40} more)_")
+    lines.append("")
+    lines.append(
+        "Если в твоём `file_scope` есть общий файл и ты собираешься его"
+        " ПЕРЕЗАПИСАТЬ через `write` — **сначала прочти его текущее**"
+        " **содержимое в этом worktree** (`read backend/<path>`), и сохрани"
+        " всё, что добавили соседи. Если файл отсутствует в worktree, но"
+        " по логике должен существовать (его создавала задача из списка"
+        " выше) — это сигнал ошибки чек-аута: остановись со"
+        " `status: \"failed\"` и опиши проблему в `notes`."
+    )
+    lines.append("</integration_branch_state>")
+    return "\n".join(lines)
 
 
 def _write_task_artifacts(
@@ -488,6 +578,12 @@ def _write_task_artifacts(
         branch=state.branch,
         result_path=result_path_rel,
     )
+    # Inject «what's already merged» — без этого воркер слепой к контексту
+    # роя и может откатить работу соседних задач (см. apologue в
+    # _build_integration_state_section).
+    integration_section = _build_integration_state_section(ctx, state)
+    if integration_section:
+        task_md_content += "\n\n" + integration_section + "\n"
     if debugger_context:
         task_md_content += "\n\n## Debugger context\n\n" + debugger_context + "\n"
     task_md_path = orchX_dir / "task.md"

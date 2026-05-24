@@ -150,7 +150,9 @@ def render_replan_context(ctx: ReplanContext) -> str:
         "обходной путь.\n"
         "   - Если упала миграция/необратимая операция — поставь BLOCKED-задачу "
         "и опиши, что должен сделать человек.\n"
-        f"   - Уменьши `max_replans` до {max(0, ctx.max_replans - ctx.replan_attempt)} (anti-loop).\n"
+        f"   - Сохрани `max_replans` ≥ {max(1, ctx.max_replans - ctx.replan_attempt)} "
+        f"(anti-loop: не больше {ctx.max_replans - ctx.replan_attempt} "
+        f"оставшихся попыток).\n"
         "3. Не угадывай фикс кода — твоё дело только переразбить задачу. "
         "Реализуют worker'ы.\n"
         "4. Сохрани `spec_files` в новом плане без изменений.\n"
@@ -184,6 +186,14 @@ async def run_replan(
 ) -> Plan:
     """Запустить orchX-planner с контекстом провала и получить новый план.
 
+    Если planner написал план, который не проходит валидацию (например,
+    cross-phase ``depends_on``, дубликаты id, циклы), — диспетчер делает
+    **один self-heal retry**: вызывает planner повторно, прикладывая
+    текст validation-ошибки и backup невалидного плана. Это спасает прогон
+    от halt'а в случаях, когда planner упустил тонкое ограничение схемы
+    (в прошлом прогоне `admin-subdomain` orchx остановился именно из-за
+    cross-phase deps — фазы p4-p6 целиком были пропущены).
+
     Args:
         repo_root: Корень репозитория (worktree planner'а — он же).
         llm: Базовый LLM-клиент.
@@ -198,7 +208,8 @@ async def run_replan(
         Свежезагруженный ``Plan`` с новой версией.
 
     Raises:
-        RuntimeError: Если planner не записал валидный план.
+        RuntimeError: Если planner не записал валидный план даже после
+            одного self-heal retry'я.
     """
     run_dir.mkdir(parents=True, exist_ok=True)
     context_file = run_dir / "replan-context.md"
@@ -212,55 +223,141 @@ async def run_replan(
     if plan_path.exists():
         plan_path.unlink()
 
-    # Все пути в подсказке — relative от repo_root, чтобы planner мог
-    # обратиться к ним через стандартный read tool.
+    log_dir.mkdir(parents=True, exist_ok=True)
+
     rel_plan = plan_path.relative_to(repo_root)
     rel_context = context_file.relative_to(repo_root)
     rel_backup = backup_path.relative_to(repo_root)
-    prompt = (
+    base_prompt = (
         "REPLAN MODE: предыдущий план провалился. Прочитай "
         f"`{rel_context}` — это бриф от диспетчера с причинами провала. "
         f"Прочитай `{rel_backup}` — это предыдущий план для справки. "
         f"Затем перепиши `{rel_plan}` под новые обстоятельства, сохранив "
         "оригинальный task_id."
     )
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"replan-{context.replan_attempt}.log"
 
-    # Spawn planner-роли in-process. Worktree совпадает с repo_root —
-    # planner всегда работает в корне репо, не в воркер-worktree.
-    outcome = await runner.run_worker(
-        llm=llm,
-        cwd=repo_root,
-        repo_root=repo_root,
-        role="planner",
-        prompt=prompt,
-        timeout_s=900,
-        log_file=log_file,
-        effort=effort,
+    # До 2 попыток (1 основная + 1 self-heal). На self-heal'е добавляем
+    # к prompt'у текст ошибки валидации, чтобы planner понял конкретную
+    # причину отбраковки.
+    last_error: str | None = None
+    invalid_backup_path: Path | None = None
+    for sub_attempt in range(2):
+        log_file = log_dir / (
+            f"replan-{context.replan_attempt}.log"
+            if sub_attempt == 0
+            else f"replan-{context.replan_attempt}-heal{sub_attempt}.log"
+        )
+        if sub_attempt == 0:
+            prompt = base_prompt
+        else:
+            heal_hint = _build_heal_hint(last_error or "(unknown)", invalid_backup_path)
+            prompt = base_prompt + "\n\n" + heal_hint
+
+        outcome = await runner.run_worker(
+            llm=llm,
+            cwd=repo_root,
+            repo_root=repo_root,
+            role="planner",
+            prompt=prompt,
+            timeout_s=900,
+            log_file=log_file,
+            effort=effort,
+        )
+        if outcome.timed_out:
+            raise RuntimeError(
+                f"replan: orchX-planner timed out after {outcome.duration_s:.0f}s; "
+                f"see log at {log_file}"
+            )
+        if outcome.returncode != 0:
+            raise RuntimeError(
+                f"replan: orchX-planner exited with code {outcome.returncode}; "
+                f"see log at {log_file}"
+            )
+        if not plan_path.exists():
+            raise RuntimeError(
+                f"replan: planner did not write {plan_path}; see log at {log_file}"
+            )
+        try:
+            new_plan = load_plan(plan_path)
+        except (ValueError, json.JSONDecodeError) as e:
+            last_error = f"{type(e).__name__}: {e}"
+            # Сохраним невалидный план под именем .invalid-N.json для
+            # forensics и для следующего вызова planner'а как backup.
+            invalid_backup_path = run_dir / (
+                f"plan.before-replan-{context.replan_attempt}"
+                f".invalid-{sub_attempt + 1}.json"
+            )
+            try:
+                invalid_backup_path.write_text(
+                    plan_path.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            except OSError:
+                pass
+            try:
+                plan_path.unlink()
+            except OSError:
+                pass
+            logger.warning(
+                "replan: planner wrote invalid plan (attempt %d/2): %s",
+                sub_attempt + 1,
+                last_error,
+            )
+            if sub_attempt == 0:
+                # Идём на self-heal retry.
+                continue
+            raise RuntimeError(
+                f"replan: planner wrote invalid plan after 1 self-heal retry: "
+                f"{last_error}"
+            ) from e
+        # Валидный план получен.
+        if new_plan.task_id != context.plan.task_id:
+            # Защита: иначе оркестратор начнёт новую интеграционную ветку.
+            raise RuntimeError(
+                f"replan: planner changed task_id "
+                f"({context.plan.task_id!r} → {new_plan.task_id!r}); refusing"
+            )
+        return new_plan
+
+    # Достижимо только если цикл не вернул раньше — defensive.
+    raise RuntimeError(
+        f"replan: unreachable — exhausted retries without verdict: {last_error}"
     )
-    if outcome.timed_out:
-        raise RuntimeError(
-            f"replan: orchX-planner timed out after {outcome.duration_s:.0f}s; "
-            f"see log at {log_file}"
-        )
-    if outcome.returncode != 0:
-        raise RuntimeError(
-            f"replan: orchX-planner exited with code {outcome.returncode}; "
-            f"see log at {log_file}"
-        )
-    if not plan_path.exists():
-        raise RuntimeError(
-            f"replan: planner did not write {plan_path}; see log at {log_file}"
-        )
-    try:
-        new_plan = load_plan(plan_path)
-    except (ValueError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"replan: planner wrote invalid plan: {e}") from e
-    if new_plan.task_id != context.plan.task_id:
-        # Защита: иначе оркестратор начнёт новую интеграционную ветку.
-        raise RuntimeError(
-            f"replan: planner changed task_id "
-            f"({context.plan.task_id!r} → {new_plan.task_id!r}); refusing"
-        )
-    return new_plan
+
+
+def _build_heal_hint(error_text: str, invalid_backup: Path | None) -> str:
+    """Сформировать секцию для повторного prompt'а planner'а с описанием ошибки.
+
+    Включает конкретное сообщение валидатора + ссылки на общие правила
+    схемы, нарушенные в прошлом прогоне.
+    """
+    backup_ref = (
+        f"Твой предыдущий невалидный план сохранён в `{invalid_backup}` — "
+        f"открой его и прочитай, чтобы понять, что именно нарушено."
+        if invalid_backup
+        else ""
+    )
+    return (
+        "## SELF-HEAL: предыдущий план не прошёл валидацию\n\n"
+        f"**Ошибка от validator'а:** `{error_text}`\n\n"
+        f"{backup_ref}\n\n"
+        "### Типовые причины и фиксы\n\n"
+        "1. **`depends_on '<id>' not in this phase`** — task в одной фазе "
+        "ссылается на id из другой фазы. Схема orchX **запрещает** cross-phase "
+        "depends_on на уровне tasks: зависимость между фазами выражается через "
+        "поле `depends_on` САМОЙ фазы (по умолчанию каждая фаза неявно зависит "
+        "от предыдущей в порядке плана). Если задаче из p4 нужен результат "
+        "p3 — это автоматически гарантировано порядком фаз; убирай ссылку из "
+        "`depends_on` task'а.\n\n"
+        "2. **`Duplicate task ids across phases`** — глобальная уникальность "
+        "id ОБЯЗАТЕЛЬНА. Если переиспользуешь имя из исходного плана "
+        "(например, `api-admin-db`) — это конфликт; добавь суффикс "
+        "(`api-admin-db-v2`).\n\n"
+        "3. **`Phase <id>: depends_on '<dep>' unknown`** — `phase.depends_on` "
+        "должен указывать на УЖЕ ОБЪЯВЛЕННУЮ выше фазу.\n\n"
+        "4. **Циклы в depends_on** — task A зависит от B, B от A. Перестрой "
+        "DAG: вынеси общую часть в третью task'у.\n\n"
+        "5. **`max_wall_seconds exceeds hardcap`** — не больше 86400s (24h).\n\n"
+        "Перепиши `plan.json` ещё раз, устранив ошибку. ВАЖНО: не меняй "
+        "`task_id`, не дублируй уже завершённые фазы из `## Что уже сделано` "
+        "секции бриф'а. Финальная реплика — `plan written`."
+    )

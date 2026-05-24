@@ -44,8 +44,9 @@ INJECTION_SENTINEL = "__command_injection_detected__"
 
 # Cимволы/последовательности, которые делают команду композитной.
 # Если они встречаются вне кавычек/heredoc'ов — это injection.
-# Heredoc не парсим — `bash -c '<cmd>'` всё равно склеивается в одну
-# строку, multi-command tools у нас не запускаются.
+# Применяется к строке, где все quoted-сегменты (`'...'`, `"..."`)
+# ЗАМЕНЕНЫ на нейтральный placeholder — поэтому `;` или `|` внутри
+# `python -c "import re; ..."` не триггерят guard. См. _strip_quoted().
 _INJECTION_OPERATORS = re.compile(
     r"""
     (?<!\\)`           # backtick command substitution
@@ -60,6 +61,72 @@ _INJECTION_OPERATORS = re.compile(
     """,
     re.VERBOSE,
 )
+
+
+def _strip_quoted(cmd: str) -> str:
+    """Заменить содержимое quoted-сегментов на placeholder, сохраняя длину.
+
+    Это позволяет ``_INJECTION_OPERATORS.search`` НЕ срабатывать на
+    `;`/`|`/`&&` ВНУТРИ строковых литералов (``python -c "import x; y"``,
+    ``echo "a && b"``). Сами кавычки сохраняем, чтобы парсер видел
+    структуру.
+
+    Поддерживаются:
+      - одинарные кавычки ``'...'`` (без интерпретации escape'ов внутри);
+      - двойные кавычки ``"..."`` (escape ``\\"`` распознаётся).
+
+    Heredoc'и (``<<EOF ... EOF``) намеренно НЕ обрабатываем — внутри
+    них может прятаться настоящая инъекция, лучше пусть guard сработает.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "\\" and i + 1 < n:
+            # сохраняем escape-пару как есть
+            out.append(ch)
+            out.append(cmd[i + 1])
+            i += 2
+            continue
+        if ch == "'":
+            # single-quoted: найти закрывающую без интерпретации escape'ов
+            out.append("'")
+            j = i + 1
+            while j < n and cmd[j] != "'":
+                # внутри одинарных кавычек \ не является escape'ом
+                out.append("X")
+                j += 1
+            if j < n:
+                out.append("'")
+                i = j + 1
+            else:
+                # незакрытая кавычка — bail out, отдадим исходник как есть,
+                # дальше shlex.split упадёт и мы honestly вернём INJECTION_SENTINEL
+                return cmd
+            continue
+        if ch == '"':
+            out.append('"')
+            j = i + 1
+            while j < n:
+                c2 = cmd[j]
+                if c2 == "\\" and j + 1 < n:
+                    out.append("XX")
+                    j += 2
+                    continue
+                if c2 == '"':
+                    break
+                out.append("X")
+                j += 1
+            if j < n:
+                out.append('"')
+                i = j + 1
+            else:
+                return cmd  # незакрытая — fallthrough к guard'у
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 # Известные «обёртки», которые не делают команду опасной — мы прозрачно
 # их перешагиваем при извлечении префикса. Для каждого: сколько следующих
@@ -125,7 +192,12 @@ def extract_command_prefix(command: str) -> str:
 
     # Грубая проверка на injection-операторы. Делается ДО shlex, чтобы
     # не зависеть от его токенизации.
-    if _INJECTION_OPERATORS.search(cmd):
+    # ВАЖНО: применяем регексп к версии команды, где quoted-сегменты
+    # заменены на placeholder'ы. Иначе `python -c "import re; print(...)"`
+    # ложно срабатывает на `;` внутри строкового литерала — в прошлых
+    # прогонах это блокировало >30 шагов воркеров (см.
+    # api-admin-db.attempt2.log: десятки попыток обойти запрет на `;`).
+    if _INJECTION_OPERATORS.search(_strip_quoted(cmd)):
         return INJECTION_SENTINEL
 
     # Токенизируем shell-style. Если shlex не справился (битые кавычки) —
