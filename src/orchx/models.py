@@ -152,6 +152,15 @@ def _parse_acceptance(raw: dict[str, Any]) -> AcceptanceCheck:
         cmd = raw.get("command")
         if not isinstance(cmd, str) or not cmd.strip():
             raise ValueError("acceptance.command must be a non-empty string")
+        # Авто-санити: если в команде есть литеральный `\n` или `\t`
+        # (двухсимвольное `chr(92)+n`/`t`) ВНУТРИ кавычек `python -c`/`node -e`,
+        # это почти всегда planner-баг — POSIX sh не интерпретирует
+        # backslash-escapes внутри двойных кавычек, и Python видит литеральный
+        # backslash, что даёт `SyntaxError: unexpected character after line
+        # continuation character`. Конвертируем в реальные newline/tab.
+        # См. orchx/runs/admin-subdomain (remove-developer-panel) как живой
+        # пример провала из-за этого.
+        cmd = _fix_literal_escapes_in_python_dash_c(cmd)
         return AcceptanceCheck(
             type="command",
             command=cmd,
@@ -185,6 +194,42 @@ def _autodescribe(raw: dict[str, Any]) -> str:
     if typ == "file_exists":
         return f"file exists: {raw.get('path', '')}"
     return f"file matches: {raw.get('path', '')} ~ {raw.get('pattern', '')}"
+
+
+_PYTHON_DASH_C_RE = re.compile(r'(python\d?\s+-c\s+|node\s+-e\s+)(["\'])(.*?)(?<!\\)\2', re.DOTALL)
+
+
+def _fix_literal_escapes_in_python_dash_c(cmd: str) -> str:
+    """Преобразовать литеральный ``\\n``/``\\t`` в реальные newline/tab внутри
+    `python -c "..."` / `node -e "..."` сегментов команды.
+
+    Backstory: planner-LLM иногда выдаёт команды вида::
+
+        python -c "import os\nif x:\n    print('OK')"
+
+    где ``\\n`` — это **два символа** (backslash + n), а не newline. POSIX
+    sh внутри двойных кавычек не интерпретирует backslash-escape'ы, и
+    Python получает физическую строку ``import os\\nif x:...`` — Python
+    парсит ``\\`` как line-continuation, ожидает newline после него, видит
+    ``n`` и падает с ``SyntaxError: unexpected character after line
+    continuation character``.
+
+    Эта функция чинит такой случай: внутри quoted-сегмента, идущего
+    непосредственно после ``python -c``/``python3 -c``/``node -e``,
+    заменяет ``\\n`` → ``\n`` (newline) и ``\\t`` → ``\t`` (tab).
+
+    НЕ трогает остальную часть команды и НЕ трогает уже-настоящие
+    newlines/tabs.
+    """
+    if "\\n" not in cmd and "\\t" not in cmd:
+        return cmd
+
+    def _repl(m: "re.Match[str]") -> str:
+        prefix, quote, body = m.group(1), m.group(2), m.group(3)
+        body = body.replace("\\n", "\n").replace("\\t", "\t")
+        return f"{prefix}{quote}{body}{quote}"
+
+    return _PYTHON_DASH_C_RE.sub(_repl, cmd)
 
 
 def _parse_task(raw: dict[str, Any]) -> TaskSpec:
