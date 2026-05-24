@@ -1,4 +1,4 @@
-"""Тесты парсера ``.kilo/agent/orchX-*.md``."""
+"""Тесты парсера ``orchx/prompts/orchX-*.md``."""
 
 from __future__ import annotations
 

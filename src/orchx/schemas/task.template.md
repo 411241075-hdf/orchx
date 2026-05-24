@@ -87,7 +87,7 @@ MCP-серверы (`5stars_*`, `finland_*`, `turbocards_*`) запускают 
 
 - `git push`, `git rebase`, `git reset --hard`
 - удаление или переименование веток
-- правки `kilo.json`, `.kilo/agent/`, `orchx/plan.json`, `orchx/log`
+- правки `kilo.json`, `orchx/prompts/`, `orchx/plan.json`, `orchx/log`
 - запуск других kilo-процессов или работа в чужих worktrees
 - создание подзадач через Task tool / new_task
 

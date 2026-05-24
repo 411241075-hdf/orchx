@@ -1,4 +1,4 @@
-"""Парсер ``.kilo/agent/orchX-<role>.md`` — YAML-frontmatter + markdown body.
+"""Парсер ``orchx/prompts/orchX-<role>.md`` — YAML-frontmatter + markdown body.
 
 Формат файла::
 
@@ -27,8 +27,8 @@ from pathlib import Path
 
 from .permissions import Permissions, parse_permissions
 
-KILO_AGENT_PREFIX = "orchX-"
-"""Все agent-файлы лежат как ``.kilo/agent/orchX-<role>.md``."""
+AGENT_PREFIX = "orchX-"
+"""Все agent-файлы лежат как ``orchx/prompts/orchX-<role>.md``."""
 
 
 @dataclass
@@ -100,7 +100,7 @@ def parse_agent_markdown(text: str, *, role: str, name: str) -> AgentSpec:
     description = str(fm.get("description") or "").strip()
     try:
         max_steps = int(fm.get("steps", 80))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         max_steps = 80
     perms_raw = fm.get("permission") or {}
     perms = (
@@ -117,16 +117,16 @@ def parse_agent_markdown(text: str, *, role: str, name: str) -> AgentSpec:
 
 
 def load_agent_spec(role: str, repo_root: Path) -> AgentSpec:
-    """Загрузить ``.kilo/agent/orchX-<role>.md`` и распарсить его.
+    """Загрузить ``orchx/prompts/orchX-<role>.md`` и распарсить его.
 
     Raises:
         FileNotFoundError: Если файл агента не найден.
     """
-    name = f"{KILO_AGENT_PREFIX}{role}"
-    path = repo_root / ".kilo" / "agent" / f"{name}.md"
+    name = f"{AGENT_PREFIX}{role}"
+    path = repo_root / "orchx" / "prompts" / f"{name}.md"
     if not path.exists():
         raise FileNotFoundError(
-            f"orchX agent spec not found: {path}. Expected {name}.md under .kilo/agent/."
+            f"orchX agent spec not found: {path}. Expected {name}.md under orchx/prompts/."
         )
     return parse_agent_markdown(
         path.read_text(encoding="utf-8"),

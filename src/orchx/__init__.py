@@ -4,7 +4,7 @@
 
 - :mod:`orchx.cli` — argparse-обёртка с подкомандами ``plan``/``run``/``all``.
 - :mod:`orchx.orchestrator` — DAG/фазы/retry/replan/PR (вся бизнес-логика).
-- :mod:`orchx.agent` — in-process воркер, читающий ``.kilo/agent/orchX-*.md``
+- :mod:`orchx.agent` — in-process воркер, читающий ``orchx/prompts/orchX-*.md``
   и общающийся с LLM напрямую через OpenAI-совместимый Proxy.
 
 Старый ``orchx/dispatcher/`` мигрировал сюда; ``orchx/`` в корне репо

@@ -1,7 +1,7 @@
 """Сборка системного промпта воркера.
 
 System prompt = шапка с environment + список доступных tool'ов и permissions
-+ markdown-body из ``.kilo/agent/orchX-<role>.md`` (без frontmatter).
++ markdown-body из ``orchx/prompts/orchX-<role>.md`` (без frontmatter).
 """
 
 from __future__ import annotations

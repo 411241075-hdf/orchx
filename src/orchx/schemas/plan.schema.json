@@ -133,7 +133,7 @@
             "debugger",
             "merger"
           ],
-          "description": "Какой kilo-agent запускать для этой задачи. Должен совпадать с именем файла в .kilo/agent/<agent>.md."
+          "description": "Какой orchX-агент запускать для этой задачи. Должен совпадать с ролью из orchx/prompts/orchX-<agent>.md."
         },
         "depends_on": {
           "type": "array",

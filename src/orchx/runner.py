@@ -112,7 +112,7 @@ async def run_worker(
         timeout_s: Wall-clock timeout.
         log_file: Куда писать transcript.
         repo_root: Корень репо (для system-prompt'а). По умолчанию = ``cwd``,
-            что подходит для воркеров в их worktree, где ``.kilo/agent/*.md``
+            что подходит для воркеров в их worktree, где ``orchx/prompts/*.md``
             уже доступны через worktree (он-же чекаут той же ветки).
         effort: ``low|medium|high|xhigh``. ``None`` — без override.
         on_activity: Callback, получающий полезные строки из стрима LLM.
