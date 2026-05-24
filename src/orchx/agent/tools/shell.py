@@ -22,7 +22,8 @@ import time
 from collections import deque
 from pathlib import Path
 
-from . import Tool, ToolContext, ToolResult
+from . import Tool, ToolContext, ToolResult, permission_denied
+from .fs import _ensure_within
 
 _TRUNCATION_LIMIT = 50_000  # ~50KB на каждый из stdout/stderr.
 
@@ -80,21 +81,42 @@ class BashTool(Tool):
             allow_list = sorted(
                 k for k, v in ctx.permissions.bash.items() if v == "allow"
             )
-            return ToolResult(
-                content=(
-                    f"Permission denied: {hit.reason}\n"
-                    f"Command: {command}\n"
-                    f"Extracted prefix: {hit.prefix or '(none)'}\n"
-                    f"Allowed patterns: {allow_list or '(none)'}\n"
-                    f"Hint: run a single command at a time. Composite "
-                    f"commands (`&&`, `||`, `;`, `|`, `$(...)`, backticks) "
-                    f"are blocked as injection. Split into multiple bash "
-                    f"calls if needed."
-                ),
-                is_error=True,
+            hint = (
+                f"Extracted prefix: {hit.prefix or '(none)'}. "
+                f"Allowed patterns: {allow_list or '(none)'}. "
+                f"Run a single command at a time. Composite commands "
+                f"(`&&`, `||`, `;`, `|`, `$(...)`, backticks) are blocked "
+                f"as injection — split into multiple bash calls if needed."
+            )
+            return permission_denied(
+                tool="bash",
+                target=command,
+                reason=hit.reason,
+                hint=hint,
             )
 
-        cwd = Path(workdir).resolve() if workdir else ctx.cwd
+        # Sandbox: bash workdir строго в свой worktree. workdir по умолчанию
+        # = ctx.cwd; если воркер указал custom workdir, он должен быть внутри.
+        if workdir:
+            cwd_candidate = (
+                Path(workdir)
+                if Path(workdir).is_absolute()
+                else (ctx.cwd / workdir)
+            )
+            safe = _ensure_within(cwd_candidate, allowed_roots=[ctx.cwd])
+            if safe is None:
+                return permission_denied(
+                    tool="bash",
+                    target=f"workdir={workdir}",
+                    reason="workdir is outside the worker worktree (cwd)",
+                    hint=(
+                        "bash workdir must stay inside your assigned "
+                        "worktree. Omit `workdir` to run in cwd."
+                    ),
+                )
+            cwd = safe
+        else:
+            cwd = ctx.cwd
         try:
             proc = await asyncio.create_subprocess_exec(
                 "bash",
@@ -207,15 +229,19 @@ class BashTool(Tool):
         body_parts: list[str] = [f"<exit_code>{rc}</exit_code>"]
         if elapsed > 5.0:
             body_parts.append(f"<wall_clock>{elapsed:.1f}s</wall_clock>")
-        out_truncated = len(out) >= _TRUNCATION_LIMIT
-        err_truncated = len(err) >= _TRUNCATION_LIMIT
+        # _read_stream уже хардкапит каждый поток на _TRUNCATION_LIMIT.
+        # Второй срез здесь был избыточен — оставляем только маркер.
+        # «>= LIMIT - 8192» учитывает chunk-size: труcacment мог случиться
+        # после получения последнего chunk'а до полного достижения лимита.
+        out_truncated = len(out) >= _TRUNCATION_LIMIT - 8192
+        err_truncated = len(err) >= _TRUNCATION_LIMIT - 8192
         if out:
-            display_out = out[:_TRUNCATION_LIMIT]
+            display_out = out
             if out_truncated:
                 display_out += "\n... (stdout truncated at 50KB)"
             body_parts.append(f"<stdout>\n{display_out}</stdout>")
         if err:
-            display_err = err[:_TRUNCATION_LIMIT]
+            display_err = err
             if err_truncated:
                 display_err += "\n... (stderr truncated at 50KB)"
             body_parts.append(f"<stderr>\n{display_err}</stderr>")

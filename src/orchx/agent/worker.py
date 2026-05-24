@@ -277,11 +277,49 @@ async def run_agent(
         on_activity: Callback на каждое заметное событие (текстовая дельта,
             начало tool-вызова). Используется TUI live-доской.
     """
-    started = time.monotonic()
-    deadline = started + timeout_s
-
     # Загрузим спеку роли (system prompt + permissions + max_steps).
     spec = _fm.load_agent_spec(role, repo_root)
+    return await run_agent_with_spec(
+        spec=spec,
+        cwd=cwd,
+        repo_root=repo_root,
+        user_prompt=user_prompt,
+        llm=llm,
+        effort=effort,
+        timeout_s=timeout_s,
+        log_file=log_file,
+        on_activity=on_activity,
+        role_for_llm=role,
+    )
+
+
+async def run_agent_with_spec(
+    *,
+    spec: _fm.AgentSpec,
+    cwd: Path,
+    repo_root: Path,
+    user_prompt: str,
+    llm: LLMClient,
+    effort: str | None = None,
+    timeout_s: int = 1800,
+    log_file: Path,
+    on_activity: Callable[[str], Any] | None = None,
+    role_for_llm: str | None = None,
+) -> WorkerOutcome:
+    """Прогнать воркера с уже загруженным :class:`AgentSpec`.
+
+    Это используется и :func:`run_agent` (после загрузки spec с диска), и
+    sub-агентами (которые синтезируют spec в памяти, см.
+    :mod:`orchx.agent.tools.task`).
+
+    Args:
+        spec: Уже распарсенная роль (frontmatter + permissions + body).
+        role_for_llm: Имя роли для ``llm.for_role(...)``-резолва per-role
+            модели. Если ``None`` — используется ``spec.role``.
+    """
+    started = time.monotonic()
+    deadline = started + timeout_s
+    role = role_for_llm or spec.role
 
     # Контекст и реестр инструментов.
     activity_cb = on_activity or (lambda _: None)
@@ -311,6 +349,7 @@ async def run_agent(
         cwd=cwd,
         repo_root=repo_root,
         tool_names=list(tools.keys()),
+        tool_descriptions={name: tool.description for name, tool in tools.items()},
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},

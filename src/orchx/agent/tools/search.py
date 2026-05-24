@@ -13,7 +13,8 @@ import re
 import shutil
 from pathlib import Path
 
-from . import Tool, ToolContext, ToolResult
+from . import Tool, ToolContext, ToolResult, permission_denied
+from .fs import _ensure_within
 
 # ---------------------------------------------------------------------------
 # Common: rg detection
@@ -156,6 +157,15 @@ class GrepTool(Tool):
             if path and not Path(path).is_absolute()
             else (Path(path).resolve() if path else ctx.cwd)
         )
+        # Sandbox: grep — read-only, разрешаем cwd + repo_root.
+        safe = _ensure_within(base, allowed_roots=[ctx.cwd, ctx.repo_root])
+        if safe is None:
+            return permission_denied(
+                tool="grep",
+                target=path or str(base),
+                reason="path is outside the worker sandbox (cwd and repo_root)",
+            )
+        base = safe
         if not base.exists():
             return ToolResult(content=f"Path not found: {base}", is_error=True)
         if _has_rg():
@@ -221,6 +231,15 @@ class CodeSearchTool(Tool):
             if path and not Path(path).is_absolute()
             else (Path(path).resolve() if path else ctx.cwd)
         )
+        # Sandbox: codesearch — read-only, разрешаем cwd + repo_root.
+        safe = _ensure_within(base, allowed_roots=[ctx.cwd, ctx.repo_root])
+        if safe is None:
+            return permission_denied(
+                tool="codesearch",
+                target=path or str(base),
+                reason="path is outside the worker sandbox (cwd and repo_root)",
+            )
+        base = safe
         if not base.exists():
             return ToolResult(content=f"Path not found: {base}", is_error=True)
         if _has_rg():

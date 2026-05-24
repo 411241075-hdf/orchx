@@ -24,6 +24,10 @@ permission:
     "tail *": allow
     "uv run ruff*": allow
     "uv run mypy*": allow
+    "python -m*": allow
+    "python -c*": allow
+    "ruff check*": allow
+    "mypy *": allow
     "npx tsc --noEmit*": allow
     "*": deny
   edit: allow

@@ -65,14 +65,19 @@ def test_prefix_one_token_for_flag_subcommand() -> None:
 def test_prefix_strips_env_prefix() -> None:
     assert extract_command_prefix("FOO=1 ls") == "ls"
     assert extract_command_prefix("FOO=bar BAZ=qux git status") == "git status"
-    assert extract_command_prefix("PYTHONPATH=. python -m pytest") == "python"
+    # `python -m pytest` теперь даёт двухтокенный prefix `python -m`
+    # (см. TASK-2: python/python3 — two-token-команды).
+    assert extract_command_prefix("PYTHONPATH=. python -m pytest") == "python -m"
 
 
 def test_prefix_strips_sudo_and_timeout() -> None:
     assert extract_command_prefix("sudo apt-get install foo") == "apt-get"
     assert extract_command_prefix("sudo -u bob ls") == "ls"
     assert extract_command_prefix("timeout 30 git status") == "git status"
-    assert extract_command_prefix("nice -n 10 python script.py") == "python"
+    # `python` теперь two-token: `python script.py` → `python script.py`.
+    assert (
+        extract_command_prefix("nice -n 10 python script.py") == "python script.py"
+    )
 
 
 def test_prefix_detects_chain_injection() -> None:
@@ -228,6 +233,81 @@ def test_edit_bool_true_allows_anything() -> None:
 def test_edit_bool_false_denies_anything() -> None:
     p = parse_permissions({"edit": "deny"})
     assert p.edit_allowed("any/path.py") is False
+
+
+# ---------------------------------------------------------------------------
+# Python prefix detection — TASK-2
+# ---------------------------------------------------------------------------
+
+
+def test_python_two_token_prefix() -> None:
+    """`python -m pytest` → prefix `python -m`."""
+    assert extract_command_prefix("python -m pytest tests/foo -q") == "python -m"
+    assert extract_command_prefix("python -c \"print(1)\"") == "python -c"
+
+
+def test_python3_two_token_prefix() -> None:
+    """То же для `python3`."""
+    assert extract_command_prefix("python3 -m pytest") == "python3 -m"
+    assert extract_command_prefix("python3 -c \"import ast\"") == "python3 -c"
+
+
+def test_python_with_script_two_token_prefix() -> None:
+    """`python script.py` → prefix `python script.py` (двухтокенный)."""
+    assert extract_command_prefix("python tests/conftest.py") == "python tests/conftest.py"
+    assert extract_command_prefix("python /tmp/evil.py") == "python /tmp/evil.py"
+
+
+def test_implementer_allows_python_m_pytest(tmp_path) -> None:  # noqa: ANN001
+    """Frontmatter implementer-а должен разрешать `python -m pytest …`."""
+    from pathlib import Path
+
+    from orchx.agent.frontmatter import load_agent_spec
+
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = load_agent_spec("implementer", repo_root)
+    hit = spec.permissions.bash_check("python -m pytest tests/foo -q")
+    assert hit.allowed is True, hit.reason
+
+
+def test_implementer_blocks_arbitrary_python_script() -> None:
+    """`python /tmp/evil.py` НЕ должно матчить allow-list — двухтокенный prefix."""
+    from pathlib import Path
+
+    from orchx.agent.frontmatter import load_agent_spec
+
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = load_agent_spec("implementer", repo_root)
+    hit = spec.permissions.bash_check("python /tmp/evil.py")
+    assert hit.allowed is False
+    # Префикс должен быть двухтокенным `python /tmp/evil.py`.
+    assert hit.prefix == "python /tmp/evil.py"
+
+
+def test_implementer_allows_ruff_check() -> None:
+    """`ruff check backend/X.py` — разрешено напрямую (без uv run)."""
+    from pathlib import Path
+
+    from orchx.agent.frontmatter import load_agent_spec
+
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = load_agent_spec("implementer", repo_root)
+    hit = spec.permissions.bash_check("ruff check backend/foo.py")
+    assert hit.allowed is True
+
+
+def test_implementer_allows_mypy() -> None:
+    """`mypy file.py --ignore-missing-imports` — разрешено."""
+    from pathlib import Path
+
+    from orchx.agent.frontmatter import load_agent_spec
+
+    repo_root = Path(__file__).resolve().parents[2]
+    spec = load_agent_spec("implementer", repo_root)
+    hit = spec.permissions.bash_check(
+        "mypy backend/foo.py --ignore-missing-imports --no-incremental"
+    )
+    assert hit.allowed is True
 
 
 def test_legacy_doom_loop_lsp_keys_silently_ignored() -> None:

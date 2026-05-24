@@ -77,6 +77,35 @@ def to_openai_schema(tool: Tool) -> dict[str, Any]:
     }
 
 
+def permission_denied(
+    *,
+    tool: str,
+    target: str,
+    reason: str,
+    hint: str | None = None,
+) -> ToolResult:
+    """Унифицированный «Permission denied»-ответ для всех tool'ов.
+
+    Хелпер даёт стабильный prefix «Permission denied:», который ловят
+    существующие тесты, и одинаковый формат тела сообщения. Bash-tool
+    дополняет hint allow-list-листингом отдельно — но через тот же
+    конструктор, чтобы prefix не разъезжался.
+
+    Args:
+        tool: Имя tool'а, который отказал (``"read"``, ``"bash"`` и т.д.).
+        target: На что был отказ — путь, команда, URL.
+        reason: Короткая причина (одно предложение, без точки).
+        hint: Опциональная подсказка LLM (что попробовать вместо этого).
+
+    Returns:
+        ``ToolResult`` с ``is_error=True`` и форматированным сообщением.
+    """
+    body = f"Permission denied: {tool} on {target} — {reason}."
+    if hint:
+        body += f"\nHint: {hint}"
+    return ToolResult(content=body, is_error=True)
+
+
 def build_tool_registry(ctx: ToolContext) -> dict[str, Tool]:
     """Построить реестр tool'ов для одного воркера.
 
@@ -95,6 +124,7 @@ def build_tool_registry(ctx: ToolContext) -> dict[str, Tool]:
     from .fs import EditTool, GlobTool, ReadTool, WriteTool
     from .search import CodeSearchTool, GrepTool
     from .shell import BashTool
+    from .task import TaskTool
     from .todo import TodoWriteTool
 
     registry: dict[str, Tool] = {}
@@ -115,5 +145,11 @@ def build_tool_registry(ctx: ToolContext) -> dict[str, Tool]:
     # bash — командный allow-list; полный deny ("*": "deny") — убираем.
     if any(action == "allow" for action in p.bash.values()):
         registry["bash"] = BashTool()
+    if p.task:
+        registry["task"] = TaskTool()
+    if p.webfetch:
+        from .web import WebFetchTool
+
+        registry["webfetch"] = WebFetchTool()
     registry["todowrite"] = TodoWriteTool()
     return registry

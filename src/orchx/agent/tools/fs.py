@@ -3,13 +3,18 @@
 Все пути резолвятся относительно ``ctx.cwd``. Запись/правка дополнительно
 гейтится через ``ctx.permissions.edit_allowed(rel_path)`` — если denied,
 возвращаем ``ToolResult(is_error=True)`` БЕЗ обращения к диску.
+
+**Sandbox.** read/glob могут смотреть в любой путь внутри ``ctx.repo_root``
+(чтобы воркер мог читать общий `.kilo/INSTRUCTIONS.md` или `AGENTS.md`).
+write/edit — строго внутри ``ctx.cwd`` (своего worktree). Любой выход за
+границу — `permission_denied` БЕЗ обращения к диску. См. :func:`_ensure_within`.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from . import Tool, ToolContext, ToolResult
+from . import Tool, ToolContext, ToolResult, permission_denied
 
 
 def _resolve(ctx: ToolContext, p: str) -> Path:
@@ -18,6 +23,44 @@ def _resolve(ctx: ToolContext, p: str) -> Path:
     if pp.is_absolute():
         return pp
     return (ctx.cwd / pp).resolve()
+
+
+def _ensure_within(path: Path, *, allowed_roots: list[Path]) -> Path | None:
+    """Резолвить путь и проверить, что он находится внутри одного из roots.
+
+    Резолвим **обе стороны** — символьные ссылки на target'е (например,
+    ``/tmp/foo -> /etc``) или на root'е (``/var`` ↔ ``/private/var`` на macOS)
+    могут спрятать escape. Не используем ``strict=True``: путь у ``write``
+    может ещё не существовать, важно только, чтобы его родитель резолвился
+    внутри разрешённой зоны.
+
+    Args:
+        path: Кандидат на доступ (как абсолют, так и относительный).
+        allowed_roots: Список корней, в которых разрешён доступ.
+
+    Returns:
+        Резолвленный путь, если внутри одного из roots; иначе ``None``.
+    """
+    try:
+        # Резолвим parent + name отдельно — это позволяет работать
+        # с несуществующими файлами (нужно для write).
+        if path.exists() or path.is_symlink():
+            resolved = path.resolve()
+        else:
+            resolved = path.parent.resolve() / path.name
+    except OSError:
+        return None
+    for root in allowed_roots:
+        try:
+            root_resolved = root.resolve()
+        except OSError:
+            continue
+        try:
+            resolved.relative_to(root_resolved)
+            return resolved
+        except ValueError:
+            continue
+    return None
 
 
 def _rel(ctx: ToolContext, abs_path: Path) -> str:
@@ -82,6 +125,20 @@ class ReadTool(Tool):
         """Прочитать файл/директорию (см. описание класса)."""
         ctx.activity(f"read {file_path}")
         path = _resolve(ctx, file_path)
+        # Sandbox: read разрешён в пределах своего worktree И всего репо
+        # (чтобы можно было читать общий AGENTS.md / .kilo/INSTRUCTIONS.md).
+        safe = _ensure_within(path, allowed_roots=[ctx.cwd, ctx.repo_root])
+        if safe is None:
+            return permission_denied(
+                tool="read",
+                target=file_path,
+                reason="path is outside the worker sandbox (cwd and repo_root)",
+                hint=(
+                    "Read only files inside your worktree or the project repo. "
+                    "Absolute paths to /etc, /tmp, $HOME, etc. are blocked."
+                ),
+            )
+        path = safe
         if not path.exists():
             return ToolResult(
                 content=f"File not found: {file_path}",
@@ -164,14 +221,26 @@ class WriteTool(Tool):
         """Записать файл целиком (см. описание класса)."""
         ctx.activity(f"write {file_path}")
         path = _resolve(ctx, file_path)
+        # Sandbox: write строго в свой worktree.
+        safe = _ensure_within(path, allowed_roots=[ctx.cwd])
+        if safe is None:
+            return permission_denied(
+                tool="write",
+                target=file_path,
+                reason="path is outside the worker worktree (cwd)",
+                hint=(
+                    "Writes must stay inside your assigned worktree. "
+                    "Relative paths like '../foo' or absolute paths to /tmp "
+                    "are blocked."
+                ),
+            )
+        path = safe
         rel = _rel(ctx, path)
         if not ctx.permissions.edit_allowed(rel):
-            return ToolResult(
-                content=(
-                    f"Permission denied: write to {rel} is not allowed by this "
-                    f"agent's edit-policy."
-                ),
-                is_error=True,
+            return permission_denied(
+                tool="write",
+                target=rel,
+                reason="not allowed by this agent's edit-policy",
             )
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,11 +301,26 @@ class EditTool(Tool):
         """Заменить ``old_string`` на ``new_string`` (см. описание класса)."""
         ctx.activity(f"edit {file_path}")
         path = _resolve(ctx, file_path)
+        # Sandbox: edit строго в свой worktree.
+        safe = _ensure_within(path, allowed_roots=[ctx.cwd])
+        if safe is None:
+            return permission_denied(
+                tool="edit",
+                target=file_path,
+                reason="path is outside the worker worktree (cwd)",
+                hint=(
+                    "Edits must stay inside your assigned worktree. "
+                    "Relative paths like '../foo' or absolute paths outside "
+                    "the worktree are blocked."
+                ),
+            )
+        path = safe
         rel = _rel(ctx, path)
         if not ctx.permissions.edit_allowed(rel):
-            return ToolResult(
-                content=f"Permission denied: edit to {rel} is not allowed.",
-                is_error=True,
+            return permission_denied(
+                tool="edit",
+                target=rel,
+                reason="not allowed by this agent's edit-policy",
             )
         if not path.exists():
             return ToolResult(
@@ -321,6 +405,15 @@ class GlobTool(Tool):
         """Найти файлы по glob-паттерну (см. описание класса)."""
         ctx.activity(f"glob {pattern}")
         base = _resolve(ctx, path) if path else ctx.cwd
+        # Sandbox: glob — read-only, разрешаем cwd + repo_root (как для read).
+        safe = _ensure_within(base, allowed_roots=[ctx.cwd, ctx.repo_root])
+        if safe is None:
+            return permission_denied(
+                tool="glob",
+                target=path or str(base),
+                reason="path is outside the worker sandbox (cwd and repo_root)",
+            )
+        base = safe
         if not base.exists() or not base.is_dir():
             return ToolResult(content=f"Not a directory: {base}", is_error=True)
         try:

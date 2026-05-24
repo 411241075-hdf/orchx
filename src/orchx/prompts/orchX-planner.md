@@ -15,6 +15,8 @@ permission:
     "git diff*": allow
     "git branch*": allow
     "ls *": allow
+    "python -c*": allow
+    "python3 -c*": allow
     "*": deny
   edit:
     "*": deny

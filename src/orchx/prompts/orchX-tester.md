@@ -22,9 +22,17 @@ permission:
     "uv run pytest*": allow
     "uv run ruff*": allow
     "uv run mypy*": allow
+    "python -m*": allow
+    "python -c*": allow
+    "python3 -m*": allow
+    "python3 -c*": allow
+    "ruff check*": allow
+    "ruff format*": allow
+    "mypy *": allow
     "npm test*": allow
     "npm run test*": allow
     "npx vitest*": allow
+    "node -e*": allow
     "*": deny
   edit: allow
 ---

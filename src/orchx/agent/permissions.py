@@ -88,6 +88,15 @@ _TWO_TOKEN_COMMANDS = {
     "poetry",
     "cargo",
     "go",
+    # Python: prefix включает первый аргумент после `-m`/`-c`/-script.
+    # Это позволяет allow-list'у `"python -m": allow` сматчиться через
+    # двухтокенный prefix `python -m`, и при этом не пропустить
+    # `python /tmp/evil.py` (его prefix будет `python /tmp/evil.py` —
+    # ни одно правило не сматчит).
+    "python",
+    "python3",
+    # ruff: `ruff check` / `ruff format` — это субкоманды.
+    "ruff",
 }
 
 
@@ -171,6 +180,12 @@ def extract_command_prefix(command: str) -> str:
     head = tokens[0]
     if head in _TWO_TOKEN_COMMANDS and len(tokens) >= 2:
         sub = tokens[1]
+        # Спец-кейс для python/python3: `-m`, `-c`, `-u` — фактически
+        # subcommand'ы (выбирают режим), не просто опции. Включаем их
+        # в двухтокенный prefix целиком: `python -m pytest` → `python -m`,
+        # `python -c "..."` → `python -c`, `python script.py` → `python script.py`.
+        if head in {"python", "python3"} and sub in {"-m", "-c"}:
+            return f"{head} {sub}"
         # Если subcommand — не флаг, формируем двухтокенный prefix.
         # `git --version` → один токен `git`.
         if not sub.startswith("-"):

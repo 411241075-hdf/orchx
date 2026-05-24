@@ -19,6 +19,8 @@ permission:
     "tail *": allow
     "wc *": allow
     "mkdir -p *": allow
+    "python -c*": allow
+    "python3 -c*": allow
     "*": deny
   edit: allow
 ---
