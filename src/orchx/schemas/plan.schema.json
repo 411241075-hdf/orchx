@@ -160,7 +160,12 @@
         "timeout_seconds": { "type": "integer", "minimum": 60, "default": 1800 },
         "model": {
           "type": "string",
-          "description": "Опциональный override модели для этой задачи. Формат provider/model. Если не задано — используется дефолт kilo.json."
+          "description": "Опциональный override модели для этой задачи. Формат provider/model. Если не задано — используется дефолт ORCHX_MODEL."
+        },
+        "effort": {
+          "type": "string",
+          "enum": ["minimal", "low", "medium", "high", "xhigh", "max"],
+          "description": "Опциональный per-task reasoning-effort. Перебивает ORCHX_EFFORT для этой задачи. Используется для усиления (xhigh на архитектурных задачах) или ослабления (low на тривиальных)."
         }
       }
     },

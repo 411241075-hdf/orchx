@@ -89,6 +89,12 @@ class TaskSpec:
     max_retries: int = 1
     timeout_seconds: int = 1800
     model: str | None = None
+    effort: str | None = None
+    """Per-task reasoning-effort override (``low|medium|high|xhigh|max``).
+
+    Если не задан — используется ``OrchXConfig.effort`` для роли. Полезно,
+    когда planner хочет локально усилить задачу с архитектурным риском
+    или, наоборот, ослабить тривиальную задачу для экономии токенов."""
 
 
 @dataclass(frozen=True)
@@ -198,6 +204,18 @@ def _parse_task(raw: dict[str, Any]) -> TaskSpec:
     acceptance_raw = raw.get("acceptance") or []
     if not isinstance(acceptance_raw, list) or not acceptance_raw:
         raise ValueError(f"Task {task_id}: acceptance must be a non-empty list")
+    effort_raw = raw.get("effort")
+    valid_efforts = {"minimal", "low", "medium", "high", "xhigh", "max"}
+    effort = (
+        str(effort_raw).strip().lower()
+        if isinstance(effort_raw, str) and effort_raw.strip()
+        else None
+    )
+    if effort is not None and effort not in valid_efforts:
+        raise ValueError(
+            f"Task {task_id}: invalid effort {effort!r}; "
+            f"expected one of {sorted(valid_efforts)}"
+        )
     return TaskSpec(
         id=task_id,
         agent=agent,
@@ -210,6 +228,7 @@ def _parse_task(raw: dict[str, Any]) -> TaskSpec:
         max_retries=int(raw.get("max_retries", 1)),
         timeout_seconds=int(raw.get("timeout_seconds", 1800)),
         model=raw.get("model"),
+        effort=effort,
     )
 
 
@@ -457,6 +476,61 @@ class FollowupSuggestion:
     reason: str = ""
 
 
+# Допустимые значения severity/category/verifier_verdict для review-findings.
+VALID_SEVERITIES = frozenset({"blocking", "non-blocking", "nit"})
+VALID_CATEGORIES = frozenset(
+    {
+        "bug",
+        "security",
+        "perf",
+        "contract_breaking",
+        "test_coverage",
+        "style",
+        "docs",
+        "other",
+    }
+)
+VALID_VERIFIER_VERDICTS = frozenset({"confirmed", "plausible", "refuted"})
+
+
+@dataclass(frozen=True)
+class ReviewFinding:
+    """Структурированная находка reviewer'а."""
+
+    severity: Literal["blocking", "non-blocking", "nit"]
+    category: str
+    description: str
+    file: str | None = None
+    line: int | None = None
+    failure_scenario: str = ""
+    suggestion: str = ""
+    verifier_verdict: str | None = None
+    """Заполняется verifier-фазой (если включена)."""
+
+
+@dataclass(frozen=True)
+class ReviewReport:
+    """Структурированный отчёт code-review."""
+
+    findings: tuple[ReviewFinding, ...]
+    summary: str = ""
+
+    @property
+    def blocking_count(self) -> int:
+        """Количество blocking-находок."""
+        return sum(1 for f in self.findings if f.severity == "blocking")
+
+    @property
+    def non_blocking_count(self) -> int:
+        """Количество non-blocking-находок."""
+        return sum(1 for f in self.findings if f.severity == "non-blocking")
+
+    @property
+    def nit_count(self) -> int:
+        """Количество nit-находок."""
+        return sum(1 for f in self.findings if f.severity == "nit")
+
+
 @dataclass(frozen=True)
 class TaskResult:
     """Результат одной задачи, записанный worker'ом."""
@@ -467,6 +541,8 @@ class TaskResult:
     notes: str
     metrics: dict[str, Any] = field(default_factory=dict)
     needs_followup: tuple[FollowupSuggestion, ...] = ()
+    review_report: ReviewReport | None = None
+    """Если worker — reviewer (или pre-merge reviewer), здесь findings."""
 
 
 def load_result(path: Path) -> TaskResult:
@@ -496,6 +572,7 @@ def load_result(path: Path) -> TaskResult:
         for f in followups_raw
         if isinstance(f, dict)
     )
+    review_report = _parse_review_report(raw.get("review_report"))
     return TaskResult(
         task_id=task_id,
         status=status,
@@ -503,4 +580,61 @@ def load_result(path: Path) -> TaskResult:
         notes=str(notes),
         metrics=raw.get("metrics") or {},
         needs_followup=followups,
+        review_report=review_report,
     )
+
+
+def _parse_review_report(raw: Any) -> ReviewReport | None:
+    """Распарсить опциональный ``review_report`` из result.json.
+
+    На некорректных значениях не падаем — пропускаем плохие findings и
+    логируем warning. Reviewer всё равно может прислать частично битый
+    JSON; лучше иметь хоть какие-то находки, чем падение всего отчёта.
+    """
+    if not isinstance(raw, dict):
+        return None
+    findings_raw = raw.get("findings")
+    if not isinstance(findings_raw, list):
+        return None
+    parsed: list[ReviewFinding] = []
+    import logging as _lg
+
+    log = _lg.getLogger(__name__)
+    for i, f in enumerate(findings_raw):
+        if not isinstance(f, dict):
+            continue
+        severity = f.get("severity")
+        category = f.get("category")
+        description = f.get("description")
+        if severity not in VALID_SEVERITIES:
+            log.warning(
+                "review finding #%d skipped: invalid severity %r", i, severity
+            )
+            continue
+        if not isinstance(description, str) or not description.strip():
+            log.warning("review finding #%d skipped: empty description", i)
+            continue
+        cat = category if category in VALID_CATEGORIES else "other"
+        verdict = f.get("verifier_verdict")
+        if verdict is not None and verdict not in VALID_VERIFIER_VERDICTS:
+            verdict = None
+        line_val = f.get("line")
+        line = (
+            int(line_val)
+            if isinstance(line_val, int) and line_val >= 1
+            else None
+        )
+        parsed.append(
+            ReviewFinding(
+                severity=severity,  # type: ignore[arg-type]
+                category=cat,
+                description=description,
+                file=str(f["file"]) if isinstance(f.get("file"), str) else None,
+                line=line,
+                failure_scenario=str(f.get("failure_scenario") or ""),
+                suggestion=str(f.get("suggestion") or ""),
+                verifier_verdict=verdict,
+            )
+        )
+    summary = str(raw.get("summary") or "")
+    return ReviewReport(findings=tuple(parsed), summary=summary)

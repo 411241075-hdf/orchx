@@ -146,6 +146,21 @@ async def stash_pop(repo_root: Path) -> None:
         logger.warning("git stash pop failed (manual resolution required): %s", e)
 
 
+async def branch_exists(repo_root: Path, branch: str) -> bool:
+    """Существует ли локальная git-ветка с таким именем."""
+    try:
+        await _git(
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{branch}",
+            cwd=repo_root,
+        )
+    except GitError:
+        return False
+    return True
+
+
 async def create_integration_branch(
     repo_root: Path, base_branch: str, integration_branch: str
 ) -> None:

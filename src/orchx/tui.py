@@ -633,6 +633,33 @@ def print_run_summary(summary: dict) -> None:
     if review:
         status = review.get("status", "?")
         kv("review", _colorize_status(status))
+        report = review.get("report") or {}
+        if report:
+            blk = report.get("blocking_count", 0)
+            non = report.get("non_blocking_count", 0)
+            nit = report.get("nit_count", 0)
+            findings_summary = (
+                f"{red(str(blk) + ' blocking')} · "
+                f"{yellow(str(non) + ' non-blocking')} · "
+                f"{dim(str(nit) + ' nits')}"
+            )
+            kv("findings", findings_summary)
+    metrics = summary.get("metrics") or {}
+    if metrics:
+        tokens = metrics.get("total_tokens", 0)
+        calls = metrics.get("total_llm_calls", 0)
+        compactions = metrics.get("total_compactions", 0)
+        if tokens or calls:
+            metrics_str = (
+                f"{tokens:,} tokens · {calls} llm calls"
+            )
+            if compactions:
+                metrics_str += f" · {compactions} compactions"
+            kv("metrics", metrics_str)
+        cats = metrics.get("failure_categories") or {}
+        if cats:
+            cat_str = ", ".join(f"{c}:{n}" for c, n in list(cats.items())[:5])
+            kv("failure types", cat_str)
     phases = summary.get("phases") or []
     if phases:
         out("")

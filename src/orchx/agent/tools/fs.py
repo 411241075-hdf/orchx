@@ -101,15 +101,27 @@ class ReadTool(Tool):
         lines = text.split("\n")
         start_idx = max(0, offset - 1)
         end_idx = min(len(lines), start_idx + limit)
+        truncated_lines = 0
         out_lines = []
         for i in range(start_idx, end_idx):
             ln = lines[i]
             if len(ln) > 2000:
-                ln = ln[:2000] + " ...(truncated)"
+                ln = ln[:2000] + " ...(line truncated at 2000 chars)"
+                truncated_lines += 1
             out_lines.append(f"{i + 1}: {ln}")
         body = "\n".join(out_lines)
         if end_idx < len(lines):
-            body += f"\n\n(Showing lines {offset}-{end_idx} of {len(lines)}. Pass offset={end_idx + 1} to continue.)"
+            body += (
+                f"\n\n(Showing lines {offset}-{end_idx} of {len(lines)} "
+                f"total. Pass offset={end_idx + 1} to continue reading.)"
+            )
+        if truncated_lines:
+            body += (
+                f"\n\n(NOTE: {truncated_lines} line(s) truncated at 2000 "
+                "chars. If you need full content of a long line, search "
+                "for it specifically with `grep` or read a narrower "
+                "line range.)"
+            )
         return ToolResult(content=body)
 
 

@@ -39,6 +39,8 @@ from .models import (
     AcceptanceCheck,
     PhaseSpec,
     Plan,
+    ReviewFinding,
+    ReviewReport,
     TaskResult,
     TaskSpec,
     load_plan,
@@ -91,6 +93,15 @@ class OrchXConfig:
     останавливается на провале и открывает PR с маркером ``[failed]``."""
     replanner_effort: str = "xhigh"
     """Effort для orchX-planner при перепланировании — переразбивка задачи требует глубины."""
+    per_task_review: bool = False
+    """Если True, после прохождения acceptance каждой задачи и перед
+    git merge запускать lightweight reviewer (Angle A: line-by-line) на
+    дифф этой задачи vs. integration-ветки. Любые blocking findings
+    отправляют задачу на retry через debugger со списком findings'ов
+    в качестве failure_context. Цель — поймать корректность-bugs до
+    merge'а, когда дифф ещё мал и проще указать на причину."""
+    per_task_review_effort: str = "medium"
+    """Effort lightweight pre-merge reviewer'а — обычно достаточно ``medium``."""
     allow_dirty: bool = False
     """UNSAFE: пропустить проверку ``ensure_clean`` и стартовать рой даже на
     грязном workdir. Воркеры будут работать против committed-версии файлов;
@@ -118,6 +129,10 @@ class AttemptInfo:
     acceptance_outcomes: list[acceptance.CheckOutcome] = field(default_factory=list)
     failure_reason: str = ""
     """Краткое объяснение, почему попытка не удалась (пусто = успешна)."""
+    pre_merge_findings: list[dict[str, Any]] = field(default_factory=list)
+    """Findings, которые pre-merge reviewer вернул для этой попытки.
+    Каждый элемент — {file, line, severity, category, description, ...}.
+    Используется debugger'ом на retry'е."""
 
 
 @dataclass
@@ -228,6 +243,7 @@ async def _initialize_context(
     plan_path: Path,
     config: OrchXConfig,
     on_init_progress=None,
+    resume: bool = False,
 ) -> OrchXContext:
     """Подготовить рабочие пути, интеграционную ветку, integration-worktree.
 
@@ -305,6 +321,30 @@ async def _initialize_context(
                 "WARNING: --allow-dirty active; workers will see committed "
                 "version of files, not your working tree edits",
             )
+    if resume:
+        _progress("resuming previous run — preserving worktrees and branches")
+        _orchX_log(
+            ctx,
+            f"resume mode: reusing existing run_dir, integration branch "
+            f"{integration_branch}, integration worktree {integration_worktree}",
+        )
+        # Если интеграционная ветка ещё не существует — создадим (на случай
+        # если предыдущий прогон упал на initialize). worktree оставим как
+        # есть.
+        if not await worktree.branch_exists(repo_root, integration_branch):
+            await worktree.create_integration_branch(
+                repo_root, plan.base_branch, integration_branch
+            )
+        if not integration_worktree.exists():
+            await worktree.add_integration_worktree(
+                repo_root, integration_worktree, integration_branch
+            )
+            _orchX_log(ctx, f"integration worktree at {integration_worktree}")
+        # Восстановим статусы из ранее записанных results/*.json.
+        await _restore_states_from_results(ctx)
+        _progress("ready (resumed)")
+        return ctx
+
     _progress("cleaning previous run artefacts")
     await _cleanup_previous_run(ctx)
     _progress(f"creating integration branch {integration_branch}")
@@ -320,6 +360,42 @@ async def _initialize_context(
 
     _progress("ready")
     return ctx
+
+
+async def _restore_states_from_results(ctx: OrchXContext) -> None:
+    """В resume-режиме: пометить уже выполненные задачи как success.
+
+    Для каждой задачи плана проверяем наличие ``orchx/results/<id>.json`` в
+    integration worktree. Если есть и `status: success` — пропускаем
+    задачу при следующем запуске. Уже завершённые фазы помечаем тоже.
+    """
+    integration_results_dir = ctx.integration_worktree / "orchx" / "results"
+    if not integration_results_dir.is_dir():
+        return
+    for state in ctx.states.values():
+        result_path = integration_results_dir / f"{state.spec.id}.json"
+        if not result_path.is_file():
+            continue
+        try:
+            result = load_result(result_path)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        if result.status == "success":
+            state.status = "success"
+            state.last_result = result
+            state.notes = result.notes
+            _orchX_log(
+                ctx, f"resume: task {state.spec.id} restored as success"
+            )
+    # Помечаем фазы — если все её задачи success, фаза тоже success.
+    for ps in ctx.phase_states.values():
+        if all(
+            ctx.states[tid].status == "success" for tid in ps.task_ids
+        ) and ps.task_ids:
+            ps.status = "success"
+            if ps.spec.id not in ctx.completed_phase_ids:
+                ctx.completed_phase_ids.append(ps.spec.id)
+            _orchX_log(ctx, f"resume: phase {ps.spec.id} restored as success")
 
 
 def _initialize_task_states_from_plan(ctx: OrchXContext, plan: Plan) -> None:
@@ -547,6 +623,29 @@ def _build_debugger_context(state: TaskState) -> str:
         parts.append("\n### Last stderr (truncated)")
         parts.append(f"```\n{snippet}\n```")
 
+    # Pre-merge review findings (если был запущен и нашёл blocking).
+    if last.pre_merge_findings:
+        parts.append("\n### Pre-merge code review findings")
+        parts.append(
+            "Reviewer прогнал твою задачу до merge'а и нашёл blocking-проблемы. "
+            "Acceptance прошёл, но эти находки **обязательны к фиксу** — иначе "
+            "следующий attempt снова заблокирует review."
+        )
+        for f in last.pre_merge_findings:
+            loc = ""
+            if f.get("file"):
+                loc = f.get("file")
+                if f.get("line"):
+                    loc = f"{loc}:{f.get('line')}"
+            cat = f.get("category", "other")
+            parts.append(
+                f"- **[{cat}]** `{loc or '?'}` — {f.get('description', '')}"
+            )
+            if f.get("failure_scenario"):
+                parts.append(f"    - **Сценарий:** {f['failure_scenario']}")
+            if f.get("suggestion"):
+                parts.append(f"    - **Подсказка:** {f['suggestion']}")
+
     parts.append(
         "\n### Your job\n\n"
         "1. **Воспроизведи провал** — прогон команд из `Reproduce locally` или "
@@ -597,7 +696,15 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
     _write_task_artifacts(ctx, state, debugger_context=debug_ctx)
 
     log_file = ctx.run_dir / "logs" / f"{state.spec.id}.attempt{attempt_num}.log"
-    effort = ctx.config.debugger_effort if is_debugger_retry else ctx.config.effort
+    # Per-task override побеждает над глобальным role-default'ом, но
+    # debugger-retry всегда поднимает effort до debugger_effort
+    # (диагностика часто требует больше глубины, чем оригинальная задача).
+    if is_debugger_retry:
+        effort = ctx.config.debugger_effort
+    elif state.spec.effort:
+        effort = state.spec.effort
+    else:
+        effort = ctx.config.effort
 
     def _on_activity(line: str) -> None:
         activity = _extract_activity(line)
@@ -1134,10 +1241,32 @@ async def _run_task_with_retries(ctx: OrchXContext, state: TaskState) -> None:
             return
         await _run_one_attempt(ctx, state)
         if state.status == "success":
-            merged = await _commit_and_merge(ctx, state)
-            if merged:
-                return
-            # merge conflict → задача провалилась на этом проходе, ретраим.
+            # Pre-merge review (если включён).
+            if ctx.config.per_task_review:
+                review_ok, review_note = await _run_pre_merge_review(ctx, state)
+                if not review_ok:
+                    # Финальный info и retry — debugger получит findings
+                    # как часть failure_context.
+                    state.status = "failed"
+                    state.notes = (
+                        f"pre-merge review found blocking findings: {review_note}"
+                    )
+                    _orchX_log(
+                        ctx,
+                        f"task {spec.id} pre-merge review BLOCKED — {review_note}",
+                    )
+                    if state.attempts:
+                        state.attempts[-1].failure_reason = state.notes
+                    # fall through to retry-loop
+                else:
+                    merged = await _commit_and_merge(ctx, state)
+                    if merged:
+                        return
+            else:
+                merged = await _commit_and_merge(ctx, state)
+                if merged:
+                    return
+            # merge conflict / blocked review → задача упала, ретраим.
         if state.attempt_count > spec.max_retries:
             break
         if ctx.total_retries >= ctx.plan.global_budget.max_total_retries:
@@ -1153,6 +1282,218 @@ async def _run_task_with_retries(ctx: OrchXContext, state: TaskState) -> None:
 
     if state.status != "success":
         _orchX_log(ctx, f"task {spec.id} FINAL STATUS=failed")
+
+
+# ---------------------------------------------------------------------------
+# Pre-merge code review (lightweight)
+# ---------------------------------------------------------------------------
+
+
+async def _run_pre_merge_review(
+    ctx: OrchXContext, state: TaskState
+) -> tuple[bool, str]:
+    """Запустить lightweight orchX-reviewer на дифф одной задачи.
+
+    Reviewer работает прямо в worktree задачи (не в integration), читает
+    дифф против integration-ветки. Если он находит хотя бы одну
+    blocking-находку — задача отправляется на retry; debugger получит
+    findings'ы как часть `failure_context` следующего attempt'а.
+
+    Returns:
+        (passed, note). ``passed=True`` означает, что blocking-замечаний
+        нет и можно мерджить. ``note`` — короткое описание для лога/
+        debugger-context'а.
+    """
+    review_id = f"premerge__{state.spec.id}__attempt{state.attempt_count}"
+    orchX_dir = state.worktree_path / "orchx"
+    orchX_dir.mkdir(parents=True, exist_ok=True)
+    (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
+    result_rel = f"orchx/results/{review_id}.json"
+    result_path = state.worktree_path / result_rel
+
+    task_md = _render_pre_merge_review_task_md(
+        ctx=ctx,
+        state=state,
+        review_id=review_id,
+        result_rel=result_rel,
+    )
+    task_md_path = orchX_dir / "task.md"
+    task_md_path.write_text(task_md, encoding="utf-8")
+    if result_path.exists():
+        result_path.unlink()
+
+    log_file = (
+        ctx.run_dir
+        / "logs"
+        / f"{state.spec.id}.premerge-review.attempt{state.attempt_count}.log"
+    )
+    outcome = await runner.run_worker(
+        llm=ctx.llm,
+        cwd=state.worktree_path,
+        repo_root=ctx.repo_root,
+        role="reviewer",
+        prompt=(
+            "Read orchx/task.md. Run a focused pre-merge review of THIS "
+            "task's diff (not the whole integration branch). Write "
+            f"`{result_rel}` with a structured review_report. Finish with "
+            "the literal word `done`."
+        ),
+        timeout_s=600,
+        log_file=log_file,
+        effort=ctx.config.per_task_review_effort,
+    )
+    if outcome.timed_out or outcome.returncode != 0:
+        # Reviewer упал — по best-effort не блокируем merge, чтобы не
+        # сорвать прогон из-за самого ревью. Но логируем.
+        _orchX_log(
+            ctx,
+            f"pre-merge review for {state.spec.id} failed to run "
+            f"(rc={outcome.returncode} timed_out={outcome.timed_out}); "
+            "proceeding to merge",
+        )
+        return True, "reviewer-tooling-failed"
+
+    if not result_path.exists():
+        _orchX_log(
+            ctx,
+            f"pre-merge review for {state.spec.id}: no result.json; proceeding",
+        )
+        return True, "reviewer-skipped"
+
+    try:
+        result = load_result(result_path)
+    except (ValueError, json.JSONDecodeError) as e:
+        _orchX_log(
+            ctx,
+            f"pre-merge review for {state.spec.id}: invalid result.json: {e}",
+        )
+        return True, f"invalid-review:{e!r}"
+
+    report = result.review_report
+    if report is None or not report.findings:
+        _orchX_log(
+            ctx,
+            f"pre-merge review for {state.spec.id}: clean (no findings)",
+        )
+        return True, "clean"
+    if report.blocking_count == 0:
+        _orchX_log(
+            ctx,
+            f"pre-merge review for {state.spec.id}: "
+            f"non-blocking findings only ({report.non_blocking_count} non-blocking, "
+            f"{report.nit_count} nits) — allowing merge",
+        )
+        return True, (
+            f"non-blocking-only "
+            f"(non={report.non_blocking_count} nit={report.nit_count})"
+        )
+    # Blocking — задача провалилась по review.
+    summary_parts: list[str] = []
+    findings_for_attempt: list[dict[str, Any]] = []
+    for f in report.findings:
+        if f.severity != "blocking":
+            continue
+        loc = f"{f.file}:{f.line}" if f.file and f.line else (f.file or "?")
+        summary_parts.append(f"[{f.category}] {loc} — {f.description}")
+        findings_for_attempt.append(
+            {
+                "file": f.file,
+                "line": f.line,
+                "severity": f.severity,
+                "category": f.category,
+                "description": f.description,
+                "failure_scenario": f.failure_scenario,
+                "suggestion": f.suggestion,
+            }
+        )
+    if state.attempts:
+        state.attempts[-1].pre_merge_findings = findings_for_attempt
+    note = "; ".join(summary_parts[:3])
+    if len(summary_parts) > 3:
+        note += f"; (+{len(summary_parts) - 3} more)"
+    return False, note
+
+
+def _render_pre_merge_review_task_md(
+    *,
+    ctx: OrchXContext,
+    state: TaskState,
+    review_id: str,
+    result_rel: str,
+) -> str:
+    """Сгенерировать task.md для pre-merge reviewer'а."""
+    return f"""# Pre-merge code review: `{state.spec.id}`
+
+> Ты — orchX-reviewer в режиме PRE-MERGE. Этот worktree содержит результат
+> работы воркера `{state.spec.agent}` над задачей `{state.spec.id}`. Сейчас
+> задача прошла acceptance, но **ещё НЕ смержена** в интеграционную ветку.
+> Твой джоб — поймать blocking-bugs до merge'а.
+
+## Goal задачи (исходный)
+
+{state.spec.goal}
+
+## Что ревьюить
+
+```bash
+git diff {ctx.integration_branch}...HEAD
+```
+
+Это дифф **только этой задачи** против интеграционной ветки.
+
+## File scope задачи
+
+{chr(10).join(f"- `{p}`" for p in state.spec.file_scope) or "_(не задан)_"}
+
+## Что искать (фокус на Angle A — line-by-line)
+
+- Логические ошибки (инверсия условий, off-by-one, falsy-zero, copy-paste).
+- Контракт-breaking изменения публичных функций без обновления callers.
+- Hard-coded секреты, пути, debug print'ы, забытые TODO.
+- Циклические импорты при изменениях `**/__init__.py`.
+- Регистрация роутеров/handlers в FastAPI app (а не только импорт).
+
+## Чего НЕ делать
+
+- Не запускай тесты — они уже прошли.
+- Не отмечай stylistic nits как blocking. **Reviewer на этом этапе
+  либо ставит `blocking` и блокирует merge, либо `non-blocking`/`nit`
+  и пропускает merge. False positives дороги.**
+- Не редактируй код. Только запись review_report в JSON.
+
+## Result file
+
+Запиши `{result_rel}` строго по схеме (см. orchX-reviewer.md):
+
+```json
+{{
+  "task_id": "{review_id}",
+  "status": "success",
+  "artifacts": [],
+  "notes": "1-2 предложения о результате review",
+  "review_report": {{
+    "summary": "Опционально",
+    "findings": [
+      {{
+        "severity": "blocking",
+        "category": "bug",
+        "file": "backend/foo.py",
+        "line": 42,
+        "description": "...",
+        "failure_scenario": "...",
+        "suggestion": "..."
+      }}
+    ]
+  }}
+}}
+```
+
+`status: "success"` если нет blocking-замечаний (даже если есть nits).
+`status: "failed"` если есть blocking — диспетчер автоматически отправит
+задачу на retry через debugger.
+
+Финальная реплика — ровно `done`.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -1314,18 +1655,246 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
         return review_state
 
     review_state.last_result = result
-    review_state.status = (
-        "success"
-        if result.status == "success"
-        else ("failed" if result.status == "failed" else "success")
+
+    # Verifier phase (3-state). Каждое finding получает verdict
+    # `confirmed`/`plausible`/`refuted`. REFUTED-findings отбрасываются.
+    if result.review_report and result.review_report.findings:
+        verified_report = await _verify_review_findings(
+            ctx=ctx,
+            report=result.review_report,
+            review_wt=review_wt,
+        )
+        if verified_report is not None:
+            # Перезаписываем result.json через простой rewrite (reviewer
+            # уже завершил работу, мы держим только TaskResult).
+            review_state.last_result = TaskResult(
+                task_id=result.task_id,
+                status=result.status,
+                artifacts=result.artifacts,
+                notes=result.notes,
+                metrics=result.metrics,
+                needs_followup=result.needs_followup,
+                review_report=verified_report,
+            )
+            try:
+                _persist_review_result(review_state.result_path, review_state.last_result)
+            except OSError as e:
+                _orchX_log(
+                    ctx,
+                    f"could not persist verified review report: {e}",
+                )
+            result = review_state.last_result
+
+    # Blocking findings всегда означают failed — даже если reviewer
+    # самостоятельно поставил success/partial. Это даёт диспетчеру
+    # источник правды для PR-маркера и автоматической генерации
+    # follow-up задач.
+    blocking = (
+        result.review_report.blocking_count if result.review_report else 0
     )
+    if blocking > 0:
+        review_state.status = "failed"
+    elif result.status == "failed":
+        review_state.status = "failed"
+    else:
+        review_state.status = "success"
     review_state.notes = result.notes
     _orchX_log(
         ctx,
-        f"auto-review done: status={result.status} "
+        f"auto-review done: status={review_state.status} "
+        f"reported={result.status} "
+        f"findings={len(result.review_report.findings) if result.review_report else 0} "
+        f"blocking={blocking} "
         f"followup_count={len(result.needs_followup)}",
     )
     return review_state
+
+
+_VERIFIER_SYSTEM_PROMPT = """Ты — verifier code-review findings. Тебе \
+дают finding от reviewer'а с указанием файла, строки и описания. \
+Твоя задача — проголосовать за один из трёх вердиктов:
+
+- **CONFIRMED** — finding точный: ты можешь воспроизвести проблему \
+(назвать input/state, при котором код упадёт или вернёт неверное значение). \
+Цитируй конкретную строку.
+- **PLAUSIBLE** — механизм реален, но триггер неуверен (зависит от env, \
+конфига, тайминга). Назови, что подтвердило бы вердикт.
+- **REFUTED** — finding фактически неверен. Например, в коде написано \
+не то, что утверждает finding; есть guard в другом месте, который \
+покрывает сценарий; или это вообще не баг (например, intentional fallback).
+
+Формат твоего ответа — ТОЛЬКО одна строка, начинающаяся со слова \
+CONFIRMED, PLAUSIBLE или REFUTED, без объяснений и без префиксов. \
+Никаких списков, никаких заголовков."""
+
+
+async def _verify_review_findings(
+    *,
+    ctx: OrchXContext,
+    report: ReviewReport,
+    review_wt: Path,
+) -> ReviewReport | None:
+    """3-state verifier: для каждого finding'а получаем verdict.
+
+    Findings со вердиктом ``REFUTED`` отбрасываются. ``CONFIRMED``/
+    ``PLAUSIBLE`` остаются в отчёте, дополненные полем ``verifier_verdict``.
+
+    Args:
+        ctx: orchX context.
+        report: исходный review report.
+        review_wt: worktree, где лежит код, которое можно прочитать
+            для верификации.
+
+    Returns:
+        Новый ``ReviewReport`` с обновлённым списком findings, либо
+        ``None`` если verifier-этап не удался (тогда оставляем оригинал).
+    """
+    if not report.findings:
+        return None
+    _orchX_log(ctx, f"verifier: starting on {len(report.findings)} findings")
+    role_llm = ctx.llm.for_role("reviewer", effort=ctx.config.reviewer_effort)
+    verified: list[ReviewFinding] = []
+    refuted: list[ReviewFinding] = []
+    for f in report.findings:
+        verdict = await _verify_one_finding(
+            llm=role_llm, finding=f, review_wt=review_wt
+        )
+        if verdict == "refuted":
+            refuted.append(f)
+            continue
+        verified.append(
+            ReviewFinding(
+                severity=f.severity,
+                category=f.category,
+                description=f.description,
+                file=f.file,
+                line=f.line,
+                failure_scenario=f.failure_scenario,
+                suggestion=f.suggestion,
+                verifier_verdict=verdict,
+            )
+        )
+    _orchX_log(
+        ctx,
+        f"verifier: {len(verified)} kept "
+        f"({sum(1 for v in verified if v.verifier_verdict == 'confirmed')} confirmed, "
+        f"{sum(1 for v in verified if v.verifier_verdict == 'plausible')} plausible), "
+        f"{len(refuted)} refuted",
+    )
+    return ReviewReport(findings=tuple(verified), summary=report.summary)
+
+
+async def _verify_one_finding(
+    *,
+    llm,
+    finding: ReviewFinding,
+    review_wt: Path,
+) -> str:
+    """Один verifier-проход. Возвращает ``confirmed`` / ``plausible`` / ``refuted``.
+
+    На любом сбое (LLM error, неожиданный текст) возвращает ``plausible``
+    как safe-fallback — не отбрасываем потенциально-реальный finding.
+    """
+    # Прочитаем релевантные строки файла, чтобы verifier'у было что цитировать.
+    file_excerpt = ""
+    if finding.file:
+        path = review_wt / finding.file
+        if path.is_file():
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                if finding.line:
+                    start = max(0, finding.line - 8)
+                    end = min(len(lines), finding.line + 8)
+                    excerpt_lines = [
+                        f"{i + 1}: {lines[i]}" for i in range(start, end)
+                    ]
+                    file_excerpt = "\n".join(excerpt_lines)
+                else:
+                    excerpt_lines = [
+                        f"{i + 1}: {lines[i]}" for i in range(min(60, len(lines)))
+                    ]
+                    file_excerpt = "\n".join(excerpt_lines)
+            except OSError:
+                pass
+
+    user_prompt = (
+        f"Finding to verify:\n\n"
+        f"- File: {finding.file or '(none)'}\n"
+        f"- Line: {finding.line or '(none)'}\n"
+        f"- Severity: {finding.severity}\n"
+        f"- Category: {finding.category}\n"
+        f"- Description: {finding.description}\n"
+        f"- Failure scenario: {finding.failure_scenario or '(none)'}\n\n"
+    )
+    if file_excerpt:
+        user_prompt += f"Excerpt of {finding.file}:\n```\n{file_excerpt}\n```\n\n"
+    user_prompt += "Verdict:"
+
+    try:
+        resp = await llm.chat(
+            messages=[
+                {"role": "system", "content": _VERIFIER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            tools=None,
+        )
+    except Exception:  # noqa: BLE001
+        return "plausible"
+    text = (resp.text or "").strip().lower()
+    if text.startswith("confirmed"):
+        return "confirmed"
+    if text.startswith("refuted"):
+        return "refuted"
+    return "plausible"
+
+
+def _persist_review_result(path: Path | None, result: TaskResult) -> None:
+    """Перезаписать result.json reviewer'а с обновлённым review_report.
+
+    Используется после verifier-фазы. Ничего не делает, если ``path`` нет.
+    """
+    if path is None or not path.parent.exists():
+        return
+    serialized = {
+        "task_id": result.task_id,
+        "status": result.status,
+        "artifacts": list(result.artifacts),
+        "notes": result.notes,
+        "metrics": result.metrics,
+        "needs_followup": [
+            {"agent": fu.agent, "goal": fu.goal, "reason": fu.reason}
+            for fu in result.needs_followup
+        ],
+    }
+    if result.review_report:
+        serialized["review_report"] = {
+            "summary": result.review_report.summary,
+            "findings": [
+                {
+                    "severity": f.severity,
+                    "category": f.category,
+                    "description": f.description,
+                    **({"file": f.file} if f.file else {}),
+                    **({"line": f.line} if f.line else {}),
+                    **(
+                        {"failure_scenario": f.failure_scenario}
+                        if f.failure_scenario
+                        else {}
+                    ),
+                    **({"suggestion": f.suggestion} if f.suggestion else {}),
+                    **(
+                        {"verifier_verdict": f.verifier_verdict}
+                        if f.verifier_verdict
+                        else {}
+                    ),
+                }
+                for f in result.review_report.findings
+            ],
+        }
+    path.write_text(
+        json.dumps(serialized, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def _render_reviewer_task_md(
@@ -1465,6 +2034,34 @@ def _budget_exceeded(ctx: OrchXContext) -> bool:
     return time.monotonic() - ctx.started_at > ctx.plan.global_budget.max_wall_seconds
 
 
+def _all_failures_are_env(failed_tasks: list[TaskState]) -> bool:
+    """Все провалившиеся задачи упали по категории ``env``?
+
+    Используется replanner-логикой: если да — replan бесполезен, нужно
+    остановиться и попросить пользователя починить окружение.
+
+    Считаем categories из последнего attempt'а каждой failed-задачи.
+    Если у задачи нет acceptance_outcomes (упал агент / timeout), считаем
+    это НЕ env-failure (то есть replan имеет смысл).
+    """
+    if not failed_tasks:
+        return False
+    for state in failed_tasks:
+        if not state.attempts:
+            return False
+        last = state.attempts[-1]
+        if not last.acceptance_outcomes:
+            return False
+        failed_outcomes = [o for o in last.acceptance_outcomes if not o.passed]
+        if not failed_outcomes:
+            # Все checks прошли, но статус failed — что-то странное
+            # (например, merge conflict). Лучше попробовать replan.
+            return False
+        if not all(o.category == "env" for o in failed_outcomes):
+            return False
+    return True
+
+
 async def _run_one_phase(ctx: OrchXContext, phase: PhaseSpec) -> bool:
     """Прогнать одну фазу: задачи по топологическим уровням с параллелизмом.
 
@@ -1562,12 +2159,33 @@ async def _attempt_replan(ctx: OrchXContext, failed_phase: PhaseSpec) -> bool:
         _orchX_log(ctx, "wall budget exceeded before replan; halting")
         return False
 
-    ctx.replan_count += 1
     failed_tasks = [
         ctx.states[tid]
         for tid in ctx.phase_states[failed_phase.id].task_ids
         if ctx.states[tid].status == "failed"
     ]
+
+    # ENV-aware bailout: если все провалившиеся задачи фазы упали по
+    # категории `env` (битый venv, отсутствующий бинарь), replan не
+    # поможет — planner создаст новый план с таким же `uv run pytest` и
+    # тот тоже упадёт. Лучше остановиться с advisory и дать пользователю
+    # починить окружение.
+    if _all_failures_are_env(failed_tasks):
+        _orchX_log(
+            ctx,
+            f"phase {failed_phase.id}: all failures are environment "
+            "(missing tooling / broken venv) — replan would not help. "
+            "Halting and pointing the user at the env-setup hints in "
+            "the failure notes.",
+        )
+        ctx.halt_reason = (
+            "Все задачи фазы провалились из-за окружения "
+            "(например, отсутствующий бинарь или сломанный venv). "
+            "Replan не поможет. Поправь окружение и перезапусти рой."
+        )
+        return False
+
+    ctx.replan_count += 1
     failure_reasons = {s.spec.id: s.notes or "(unknown)" for s in failed_tasks}
 
     _orchX_log(
@@ -1640,6 +2258,7 @@ async def run_orchX(
     config: OrchXConfig | None = None,
     on_ctx_ready=None,
     on_init_progress=None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     """Главная точка входа: прогнать рой целиком.
 
@@ -1665,7 +2284,11 @@ async def run_orchX(
     """
     config = config or OrchXConfig()
     ctx = await _initialize_context(
-        repo_root, plan_path, config, on_init_progress=on_init_progress
+        repo_root,
+        plan_path,
+        config,
+        on_init_progress=on_init_progress,
+        resume=resume,
     )
     if on_ctx_ready is not None:
         # Сигнал внешнему наблюдателю (CLI/TUI), что контекст создан и можно
@@ -1712,11 +2335,17 @@ async def run_orchX(
             # Phase failed → try replan.
             replanned = await _attempt_replan(ctx, next_phase)
             if not replanned:
-                halt_reason = (
-                    f"phase {next_phase.id!r} failed and replan unavailable "
-                    f"(allow_replan={next_phase.allow_replan}, "
-                    f"replans_used={ctx.replan_count}/{ctx.plan.global_budget.max_replans})"
-                )
+                # Replanner мог уже выставить halt_reason (например, ENV
+                # bailout — менее общая причина, чем generic «replan
+                # unavailable»). Перезаписывать не нужно.
+                if ctx.halt_reason:
+                    halt_reason = ctx.halt_reason
+                else:
+                    halt_reason = (
+                        f"phase {next_phase.id!r} failed and replan unavailable "
+                        f"(allow_replan={next_phase.allow_replan}, "
+                        f"replans_used={ctx.replan_count}/{ctx.plan.global_budget.max_replans})"
+                    )
                 _orchX_log(ctx, f"halting: {halt_reason}")
                 break
             # После успешного replan продолжаем главный цикл — он возьмёт
@@ -1796,9 +2425,32 @@ def _build_summary(ctx: OrchXContext) -> dict[str, Any]:
     """Сводка по результатам прогона."""
     counts = {"success": 0, "failed": 0, "skipped": 0, "pending": 0, "running": 0}
     tasks_summary: list[dict[str, Any]] = []
+    # Расширенные метрики для cost/quality-анализа.
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_llm_calls = 0
+    total_compactions = 0
+    failure_categories: dict[str, int] = {}
     for state in ctx.states.values():
         counts[state.status] = counts.get(state.status, 0) + 1
         tasks_summary.append(_summarize_state(state))
+        for attempt in state.attempts:
+            if attempt.outcome:
+                total_input_tokens += attempt.outcome.input_tokens
+                total_output_tokens += attempt.outcome.output_tokens
+                total_llm_calls += attempt.outcome.llm_calls
+                total_compactions += attempt.outcome.compactions
+            for outcome in attempt.acceptance_outcomes:
+                if not outcome.passed:
+                    cat = outcome.category or "unknown"
+                    failure_categories[cat] = failure_categories.get(cat, 0) + 1
+    if ctx.review_state and ctx.review_state.attempts:
+        for attempt in ctx.review_state.attempts:
+            if attempt.outcome:
+                total_input_tokens += attempt.outcome.input_tokens
+                total_output_tokens += attempt.outcome.output_tokens
+                total_llm_calls += attempt.outcome.llm_calls
+                total_compactions += attempt.outcome.compactions
 
     phases_summary: list[dict[str, Any]] = []
     for phase in ctx.plan.phases:
@@ -1823,6 +2475,19 @@ def _build_summary(ctx: OrchXContext) -> dict[str, Any]:
             }
         )
 
+    counts["total"] = sum(counts.values())
+    metrics = {
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "total_tokens": total_input_tokens + total_output_tokens,
+        "total_llm_calls": total_llm_calls,
+        "total_compactions": total_compactions,
+        "total_retries": ctx.total_retries,
+        "failure_categories": dict(
+            sorted(failure_categories.items(), key=lambda kv: -kv[1])
+        ),
+    }
+
     out: dict[str, Any] = {
         "task_id": ctx.plan.task_id,
         "base_branch": ctx.plan.base_branch,
@@ -1841,6 +2506,7 @@ def _build_summary(ctx: OrchXContext) -> dict[str, Any]:
         "aborted": ctx.aborted,
         "abort_reason": ctx.abort_reason,
         "halt_reason": ctx.halt_reason,
+        "metrics": metrics,
         "config": {
             "auto_review": ctx.config.auto_review,
             "auto_followup": ctx.config.auto_followup,
@@ -1853,10 +2519,12 @@ def _build_summary(ctx: OrchXContext) -> dict[str, Any]:
             "debugger_effort": ctx.config.debugger_effort,
             "merger_effort": ctx.config.merger_effort,
             "replanner_effort": ctx.config.replanner_effort,
+            "per_task_review": ctx.config.per_task_review,
+            "per_task_review_effort": ctx.config.per_task_review_effort,
         },
     }
     if ctx.review_state is not None:
-        out["review"] = {
+        review_block: dict[str, Any] = {
             "status": ctx.review_state.status,
             "branch": ctx.review_state.branch,
             "worktree": str(ctx.review_state.worktree_path),
@@ -1874,4 +2542,27 @@ def _build_summary(ctx: OrchXContext) -> dict[str, Any]:
                 else []
             ),
         }
+        # Структурированные findings в summary — для PR body и downstream'ов.
+        if ctx.review_state.last_result and ctx.review_state.last_result.review_report:
+            rr = ctx.review_state.last_result.review_report
+            review_block["report"] = {
+                "summary": rr.summary,
+                "blocking_count": rr.blocking_count,
+                "non_blocking_count": rr.non_blocking_count,
+                "nit_count": rr.nit_count,
+                "findings": [
+                    {
+                        "severity": f.severity,
+                        "category": f.category,
+                        "file": f.file,
+                        "line": f.line,
+                        "description": f.description,
+                        "failure_scenario": f.failure_scenario,
+                        "suggestion": f.suggestion,
+                        "verifier_verdict": f.verifier_verdict,
+                    }
+                    for f in rr.findings
+                ],
+            }
+        out["review"] = review_block
     return out

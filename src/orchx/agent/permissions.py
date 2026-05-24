@@ -3,22 +3,191 @@
 Зеркалит то, что раньше делал kilo на основе frontmatter ``permission:``-блока.
 
 Модель преднамеренно простая:
+
 - Скаляр ``allow`` / ``deny`` для tool'ов без под-параметров (read, glob, …).
 - Allow/deny + opt-glob-словарь для ``edit`` (path-gating).
-- Allow-list-словарь команд для ``bash`` (default ``"*": deny``).
+- Allow-list-словарь команд для ``bash`` с **prefix-detection** и
+  injection-guard'ом (default ``"*": deny``).
 
-Формат словаря-allow-list — порядок не важен: матчер сортирует правила
-по «специфичности» (длина паттерна, отсутствие ``*``).
+Bash sandbox матчит **извлечённый prefix** команды, а не полную строку.
+Это закрывает дыру вида ``"git status* allow"`` пропускает ``git status &&
+rm -rf /`` целиком — теперь композитные команды (``&&``, ``||``, ``;``,
+``|``, backtick'и, ``$(...)``) явно отвергаются как command-injection.
 
-Bash sandbox матчит **полную строку команды**, не разбивая её по ``|``/``;``.
-Это совпадает с поведением kilo и под это писались agent-файлы.
+Префикс — это первая (от 1 до 3) логических токенов команды без
+ENV-вступления (``FOO=bar cmd`` → ``cmd``), без ``sudo``/``timeout``-
+обёрток и без ``&&``/``;``/``|``-цепочек. Для команд с подкомандами
+(``git status``, ``gh pr view``, ``npm run lint``) префикс — пара
+«команда + первая subcommand'а», чтобы можно было allow'ить только
+``git status`` и не давать ``git push``.
+
+Совместимость со старыми spec'ами:
+
+- Паттерны вроде ``"git status*"`` продолжают работать — суффиксный
+  ``*`` мы воспринимаем как «всё, что начинается с этого prefix'а».
+- Паттерны без хвоста (``"git status"``) — exact match по prefix'у.
+- ``"*": "deny"`` — fallback (deny by default).
+- ``"*": "allow"`` — wildcard-allow ВСЁ, кроме команд с injection'ом
+  (используется только для `bash: allow` в frontmatter'е).
 """
 
 from __future__ import annotations
 
 import fnmatch
+import re
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
+
+# Идентификатор «инъекция обнаружена», возвращаемый prefix-extractor'ом.
+INJECTION_SENTINEL = "__command_injection_detected__"
+
+# Cимволы/последовательности, которые делают команду композитной.
+# Если они встречаются вне кавычек/heredoc'ов — это injection.
+# Heredoc не парсим — `bash -c '<cmd>'` всё равно склеивается в одну
+# строку, multi-command tools у нас не запускаются.
+_INJECTION_OPERATORS = re.compile(
+    r"""
+    (?<!\\)`           # backtick command substitution
+  | \$\(              # $(...) command substitution
+  | \&\&              # AND chain
+  | \|\|              # OR chain
+  | (?<!\|)\|(?!\|)   # single pipe (но не часть || )
+  | ;                 # statement separator
+  | \n                # перевод строки внутри одной команды
+  | >\(               # process substitution >(cmd)
+  | <\(               # process substitution <(cmd)
+    """,
+    re.VERBOSE,
+)
+
+# Известные «обёртки», которые не делают команду опасной — мы прозрачно
+# их перешагиваем при извлечении префикса. Для каждого: сколько следующих
+# токенов оно «съедает» как свои опции.
+# - ``sudo``: опции до первого не-флаговой токена.
+# - ``timeout``: первый позиционный токен — длительность, потом сама команда.
+# - env-prefix ``FOO=bar`` обрабатывается отдельно.
+_PASSTHROUGH_PREFIXES = {"sudo", "timeout", "nice", "ionice", "env"}
+
+
+# Команды, у которых allow-rule относится не к команде целиком, а к паре
+# «команда + первая subcommand'а». Без этого `git push` нельзя отличить
+# от `git status` через простой allowlist.
+_TWO_TOKEN_COMMANDS = {
+    "git",
+    "gh",
+    "docker",
+    "kubectl",
+    "npm",
+    "npx",
+    "yarn",
+    "pnpm",
+    "bun",
+    "uv",
+    "pip",
+    "poetry",
+    "cargo",
+    "go",
+}
+
+
+def extract_command_prefix(command: str) -> str:
+    """Извлечь канонический prefix команды для матчинга.
+
+    Возвращает:
+
+    - ``"<INJECTION_SENTINEL>"``, если в команде обнаружена композиция
+      (``&&``, ``||``, ``;``, ``|``, backtick'и, ``$(...)``).
+    - Пустую строку для команд без prefix'а (например, чистый ``$(echo)``,
+      пустая команда). Вызывающий код трактует как «нет правила, deny».
+    - Один токен (``"ls"``, ``"cat"``) для команд без подкоманд.
+    - Два токена (``"git status"``, ``"gh pr"``, ``"npm run"``) для
+      команд из ``_TWO_TOKEN_COMMANDS``.
+
+    Поведение совместимо с эталонной prefix-detection из
+    ``examples/agent-prompt-bash-command-prefix-detection.md`` (Claude Code).
+
+    Args:
+        command: shell-команда целиком.
+    """
+    cmd = command.strip()
+    if not cmd:
+        return ""
+
+    # Грубая проверка на injection-операторы. Делается ДО shlex, чтобы
+    # не зависеть от его токенизации.
+    if _INJECTION_OPERATORS.search(cmd):
+        return INJECTION_SENTINEL
+
+    # Токенизируем shell-style. Если shlex не справился (битые кавычки) —
+    # отвергаем, лучше параноить.
+    try:
+        tokens = shlex.split(cmd, posix=True)
+    except ValueError:
+        return INJECTION_SENTINEL
+    if not tokens:
+        return ""
+
+    # Шаг 1 — снимаем env-prefix (FOO=bar BAZ=qux cmd ...).
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens.pop(0)
+    if not tokens:
+        return ""
+
+    # Шаг 2 — снимаем passthrough-обёртки (sudo, timeout, env, nice, ...).
+    # Сначала съедаем все ведущие `-...` опции (с возможным аргументом).
+    # Затем для команд, у которых первый позиционный аргумент — не команда
+    # (timeout 30, nice -n 10 НЕ съели в опции, etc.), съедаем дополнительно
+    # один позиционный токен.
+    while tokens and tokens[0] in _PASSTHROUGH_PREFIXES:
+        wrapper = tokens.pop(0)
+        # Шаг 2a — флаги (включая флаги-с-аргументом).
+        while tokens and tokens[0].startswith("-"):
+            opt = tokens.pop(0)
+            # Опции с аргументом, известные для sudo/env/nice/ionice/timeout.
+            opts_with_arg = {
+                "sudo": {"-u", "-g", "-h", "-p", "-S"},
+                "env": {"-u", "-S"},
+                "timeout": {"-s", "-k"},
+                "nice": {"-n"},
+                "ionice": {"-c", "-n", "-p", "-P", "-u"},
+            }.get(wrapper, set())
+            if opt in opts_with_arg and tokens:
+                tokens.pop(0)
+        # Шаг 2b — для timeout/nice/ionice без `-n N` синтаксиса — берём
+        # первый позиционный «не-команду». timeout: первая длительность
+        # ('30', '5m'); nice: positive integer; ionice: число.
+        if wrapper in {"timeout", "nice", "ionice"} and tokens:
+            # Если первый токен похож на «значение» (число, возможно с
+            # суффиксом времени), съедаем его. Если это уже сама команда
+            # (буквенное слово) — оставляем.
+            head = tokens[0]
+            if re.match(r"^\d+([smhd]|\.\d+)?$", head):
+                tokens.pop(0)
+
+    if not tokens:
+        return ""
+
+    head = tokens[0]
+    if head in _TWO_TOKEN_COMMANDS and len(tokens) >= 2:
+        sub = tokens[1]
+        # Если subcommand — не флаг, формируем двухтокенный prefix.
+        # `git --version` → один токен `git`.
+        if not sub.startswith("-"):
+            return f"{head} {sub}"
+    return head
+
+
+@dataclass
+class BashRuleHit:
+    """Что вернул матчер для одного вызова."""
+
+    allowed: bool
+    pattern: str | None
+    prefix: str
+    """Извлечённый prefix (или INJECTION_SENTINEL/пустая строка)."""
+    reason: str
+    """Человеко-читаемая причина решения (для error-сообщения воркеру)."""
 
 
 def _truthy(val: Any, default: bool) -> bool:
@@ -28,6 +197,29 @@ def _truthy(val: Any, default: bool) -> bool:
     if isinstance(val, str):
         return val.strip().lower() == "allow"
     return default
+
+
+# Поля frontmatter'а, которые orchX runtime реально использует.
+# Всё, что не в этом списке, тихо игнорируется (с warning в логе).
+_KNOWN_PERMISSION_KEYS = frozenset(
+    {
+        "read",
+        "glob",
+        "grep",
+        "codesearch",
+        "semantic_search",
+        "webfetch",
+        "websearch",
+        "task",
+        "edit",
+        "bash",
+    }
+)
+
+# Поля frontmatter'а, которые остались в spec'ах от kilo, но orchX их
+# не использует. Их парсим тихо (не warn'им) — иначе старые spec'ы
+# будут производить шум в логах.
+_LEGACY_PERMISSION_KEYS = frozenset({"doom_loop", "lsp"})
 
 
 @dataclass
@@ -50,7 +242,12 @@ class Permissions:
     """
 
     bash: dict[str, str] = field(default_factory=lambda: {"*": "deny"})
-    """Allow-list bash-команд в формате glob → allow/deny."""
+    """Allow-list bash-команд в формате glob → allow/deny.
+
+    Матчинг идёт по ИЗВЛЕЧЁННОМУ PREFIX'у команды (не по полной строке).
+    Композитные команды (``&&``, ``|``, ``;``, backtick'и, ``$(...)``)
+    отвергаются как injection до матча.
+    """
 
     def edit_allowed(self, rel_path: str) -> bool:
         """Разрешено ли редактировать файл по относительному пути."""
@@ -66,24 +263,108 @@ class Permissions:
         return False
 
     def bash_allowed(self, command: str) -> tuple[bool, str | None]:
-        """Разрешена ли bash-команда.
+        """Совместимый с прежней сигнатурой матчер. Возвращает (allowed, pattern).
 
-        Returns:
-            (allowed, matched_pattern). Если ни одно правило не сматчилось —
-            ``(False, None)`` (deny by default).
+        Для подробного результата (с причиной отказа) используй
+        :meth:`bash_check`.
         """
+        hit = self.bash_check(command)
+        return (hit.allowed, hit.pattern)
+
+    def bash_check(self, command: str) -> BashRuleHit:
+        """Подробная проверка команды.
+
+        Алгоритм:
+
+        1. Извлекаем prefix через :func:`extract_command_prefix`.
+        2. Если prefix == INJECTION_SENTINEL — отвергаем сразу с причиной
+           «command injection detected».
+        3. Если prefix пустой — отвергаем (не смогли разобрать команду).
+        4. Иначе матчим prefix против правил из ``self.bash``. Правила
+           сортируются по специфичности (длина без ``*``).
+
+        **Совместимость со старыми правилами**: правило ``"git status*"``
+        в legacy-spec'ах применяется как «всё, что начинается с
+        ``git status``», т.е. нормализованное «exact = git status или
+        что-то после, например `git status -u`». Для prefix'а ``git status``
+        паттерн ``git status*`` всё равно matched через `fnmatchcase`.
+
+        ``"*": allow`` — wildcard, матчит ЛЮБОЙ извлечённый prefix.
+        Композитные команды всё равно отвергаются injection-guard'ом.
+        """
+        prefix = extract_command_prefix(command)
+        if prefix == INJECTION_SENTINEL:
+            return BashRuleHit(
+                allowed=False,
+                pattern=None,
+                prefix=prefix,
+                reason=(
+                    "command injection detected: command contains shell "
+                    "metacharacters (&&, ||, ;, |, backticks, or $(…)). "
+                    "Run only one command at a time, without chaining."
+                ),
+            )
+        if not prefix:
+            return BashRuleHit(
+                allowed=False,
+                pattern=None,
+                prefix="",
+                reason="empty or unparseable command",
+            )
+
+        # Сортировка: самые специфичные первыми, "*" — в конец.
+        # Длина без `*` — индикатор «специфичности».
         rules = sorted(
             self.bash.items(),
-            key=lambda kv: (kv[0] == "*", -len(kv[0])),
+            key=lambda kv: (kv[0] == "*", -len(kv[0].replace("*", ""))),
         )
         for pattern, action in rules:
-            if fnmatch.fnmatchcase(command, pattern):
-                return (action == "allow", pattern)
-        return (False, None)
+            # Normalize legacy patterns: `"ls *"` and `"git status*"` both
+            # written by humans for full-string matching, here we match by
+            # prefix. Strip trailing whitespace+star and a trailing star so
+            # `"ls *"`, `"ls*"` and `"ls"` all describe «prefix == ls».
+            norm = pattern.rstrip()
+            if norm.endswith("*"):
+                norm = norm[:-1].rstrip()
+            if not norm:
+                # Только `*` — wildcard, отдельная ветка матчинга.
+                if pattern == "*" and fnmatch.fnmatchcase(prefix, "*"):
+                    return BashRuleHit(
+                        allowed=action == "allow",
+                        pattern=pattern,
+                        prefix=prefix,
+                        reason=(
+                            f"prefix={prefix!r} matched wildcard '*' → {action}"
+                        ),
+                    )
+                continue
+            if prefix == norm or fnmatch.fnmatchcase(prefix, norm):
+                return BashRuleHit(
+                    allowed=action == "allow",
+                    pattern=pattern,
+                    prefix=prefix,
+                    reason=(
+                        f"prefix={prefix!r} matched pattern {pattern!r} "
+                        f"(normalized: {norm!r}) → {action}"
+                    ),
+                )
+
+        return BashRuleHit(
+            allowed=False,
+            pattern=None,
+            prefix=prefix,
+            reason=f"no rule matched prefix={prefix!r}",
+        )
 
 
 def parse_permissions(raw: dict[str, Any]) -> Permissions:
-    """Сконвертировать frontmatter-словарь в :class:`Permissions`."""
+    """Сконвертировать frontmatter-словарь в :class:`Permissions`.
+
+    Неизвестные ключи (кроме legacy-набора `doom_loop`/`lsp`) игнорируются
+    без warning'а — orchX runtime использует только поля из
+    :data:`_KNOWN_PERMISSION_KEYS`. В будущем можно добавить strict-режим
+    через env, чтобы ошибки в spec'е ловились на CI.
+    """
     p = Permissions()
     p.read = _truthy(raw.get("read", "allow"), True)
     p.glob = _truthy(raw.get("glob", "allow"), True)
@@ -138,7 +419,12 @@ def describe_permissions(p: Permissions) -> str:
         )
     allowed_bash = [g for g, a in p.bash.items() if a == "allow"]
     if allowed_bash:
-        lines.append("- bash allow-list: " + ", ".join(allowed_bash))
+        lines.append(
+            "- bash: prefix-matched allow-list — "
+            + ", ".join(sorted(allowed_bash))
+            + ". Composite commands (&&, ||, ;, |, $(...), backticks) are "
+            + "blocked as command injection regardless of prefix."
+        )
     else:
         lines.append("- bash: no commands allowed")
     return "\n".join(lines)

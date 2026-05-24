@@ -114,6 +114,11 @@ class ChatResponse:
 
     finish_reason: str | None = None
 
+    input_tokens: int = 0
+    """Сколько input-токенов взял этот один LLM-вызов (если Proxy сообщает)."""
+    output_tokens: int = 0
+    """Сколько output-токенов произвёл этот вызов."""
+
 
 # ---------------------------------------------------------------------------
 # Effort mapping
@@ -121,47 +126,112 @@ class ChatResponse:
 
 
 # Маппинг orchX-effort → Anthropic-effort. orchX использует «xhigh» как
-# обобщённый «максимум reasoning»; для adaptive thinking это `max`.
+# обобщённый «максимум reasoning»; на Anthropic мы держим расширенный
+# набор уровней (``xhigh`` доступен на Opus 4.7 как промежуточное значение
+# между ``high`` и ``max``).
 _ANTHROPIC_EFFORT_MAP = {
     "minimal": "low",
     "low": "low",
     "medium": "medium",
     "high": "high",
-    "xhigh": "max",
+    "xhigh": "xhigh",
     "max": "max",
 }
+
+# Gemini thinking budgets — приблизительные эквиваленты.
+# Gemini 2.5 принимает int (max ~24576 для Flash, ~32768 для Pro).
+# 0 — отключить thinking, -1 — динамический (рекомендация Google).
+_GEMINI_THINKING_BUDGET = {
+    "minimal": 0,
+    "low": 1024,
+    "medium": 4096,
+    "high": 12288,
+    "xhigh": 24576,
+    "max": -1,  # dynamic
+}
+
+
+def _is_anthropic(model: str) -> bool:
+    """Определить семейство Claude (Anthropic / openrouter passthrough)."""
+    m = model.lower()
+    if "claude" in m or m.startswith("anthropic/") or "/anthropic/" in m:
+        return True
+    return False
+
+
+def _is_anthropic_4_7_or_later(model: str) -> bool:
+    """Определить Claude Opus 4.7+ — для них нужно `display: "summarized"`."""
+    m = model.lower()
+    # `claude-opus-4-7`, `claude-opus-4-8`, …
+    return bool(_ANT_47_RE.search(m))
+
+
+_ANT_47_RE = __import__("re").compile(
+    r"claude-(opus|sonnet|haiku)-([4-9]-[7-9]|[5-9]-\d+|\d{2,}-\d+)"
+)
+
+
+def _is_openai_reasoning(model: str) -> bool:
+    """OpenAI o-series и GPT-5/5.1 (с reasoning_effort)."""
+    m = model.lower()
+    # o1, o3, o4-mini, gpt-5, gpt-5.1.
+    if "openai/" in m:
+        m = m.split("openai/")[-1]
+    if m.startswith(("o1", "o3", "o4")):
+        return True
+    if m.startswith("gpt-5"):
+        return True
+    return False
+
+
+def _is_gemini(model: str) -> bool:
+    """Google Gemini (через Proxy)."""
+    m = model.lower()
+    return "gemini" in m
+
+
+def _is_deepseek(model: str) -> bool:
+    """DeepSeek — поддерживает `reasoning_effort` на R-моделях."""
+    m = model.lower()
+    return "deepseek" in m
 
 
 def _effort_extra_body(effort: str | None, model: str) -> dict[str, Any]:
     """Сконвертировать orchX-effort в provider-specific extra_body.
 
-    - **Anthropic Claude 4.6+** (включая Sonnet/Opus) — adaptive thinking
+    Поддерживаемые семейства моделей:
+
+    - **Anthropic Claude 4.6+** (Sonnet/Opus/Haiku) — adaptive thinking
       (``thinking: {"type": "adaptive"}``) + ``output_config.effort``.
-      Это рекомендованный режим: модель сама решает, когда думать и сколько,
-      `effort` задаёт soft-границу.
-    - **OpenAI o-series** — top-level ``reasoning_effort`` (через extra_body
-      Proxy транслирует в нужный параметр).
-    - **Прочее** — `reasoning_effort` как fallback; если Proxy не знает —
-      проигнорирует.
+      Для Opus 4.7+ дополнительно выставляется ``display: "summarized"``,
+      иначе thinking-блоки приходят пустыми и live-доска не показывает
+      прогресс рассуждения.
+    - **OpenAI o-series + GPT-5** — top-level ``reasoning_effort``.
+    - **Google Gemini 2.5+** — ``thinking_config: {thinking_budget: N}``.
+    - **DeepSeek R-серия** — ``reasoning_effort`` (Proxy транслирует).
+    - **Прочее** (DeepSeek V, Llama, Qwen non-reasoning, …) — пусто;
+      effort просто игнорируется, модель работает в обычном режиме.
     """
     if not effort:
         return {}
-    model_l = model.lower()
-    is_anthropic = "claude" in model_l or "anthropic" in model_l
-    is_openai_o = (
-        model_l.startswith(("openai/o", "o"))
-        and not is_anthropic
-        and "openai/gpt" not in model_l
-    )
-    if is_openai_o:
-        return {"reasoning_effort": effort}
-    if is_anthropic:
+    if _is_anthropic(model):
         ant_effort = _ANTHROPIC_EFFORT_MAP.get(effort, "high")
+        thinking: dict[str, Any] = {"type": "adaptive"}
+        if _is_anthropic_4_7_or_later(model):
+            thinking["display"] = "summarized"
         return {
-            "thinking": {"type": "adaptive"},
+            "thinking": thinking,
             "output_config": {"effort": ant_effort},
         }
-    return {"reasoning_effort": effort}
+    if _is_openai_reasoning(model):
+        return {"reasoning_effort": effort}
+    if _is_gemini(model):
+        budget = _GEMINI_THINKING_BUDGET.get(effort, 4096)
+        return {"thinking_config": {"thinking_budget": budget}}
+    if _is_deepseek(model):
+        return {"reasoning_effort": effort}
+    # Любая другая модель — не насилуем её reasoning-параметром.
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -267,14 +337,34 @@ class LLMClient:
         if extra:
             kwargs["extra_body"] = extra
 
+        # Запросим, чтобы провайдер вернул usage в стриме (OpenAI standard
+        # требует stream_options.include_usage=true). Если Proxy не знает —
+        # просто проигнорирует параметр.
+        kwargs.setdefault("stream_options", {"include_usage": True})
+
         # Аккумулирующие буферы. tool_calls приходят дельтами по index.
         text_chunks: list[str] = []
         tool_acc: dict[int, dict[str, Any]] = {}
         seen_tool_names: set[int] = set()
         finish_reason: str | None = None
+        input_tokens = 0
+        output_tokens = 0
 
         async with await self._client.chat.completions.create(**kwargs) as stream:  # type: ignore[arg-type]
             async for chunk in stream:
+                # Usage может прийти в финальном chunk'е (OpenAI/Anthropic).
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    input_tokens = (
+                        getattr(usage, "input_tokens", None)
+                        or getattr(usage, "prompt_tokens", None)
+                        or input_tokens
+                    )
+                    output_tokens = (
+                        getattr(usage, "output_tokens", None)
+                        or getattr(usage, "completion_tokens", None)
+                        or output_tokens
+                    )
                 # finish_reason обычно прилетает в последней дельте.
                 try:
                     choice = chunk.choices[0]
@@ -341,6 +431,8 @@ class LLMClient:
             tool_calls=parsed_calls,
             tool_calls_raw=raw_calls,
             finish_reason=finish_reason,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
 
 

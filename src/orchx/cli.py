@@ -201,6 +201,8 @@ def _orchX_config_from_args(args: argparse.Namespace) -> orchestrator.OrchXConfi
         replanner_effort=getattr(args, "replanner_effort", "xhigh"),
         allow_dirty=getattr(args, "allow_dirty", False),
         auto_stash=getattr(args, "auto_stash", False),
+        per_task_review=getattr(args, "per_task_review", False),
+        per_task_review_effort=getattr(args, "per_task_review_effort", "medium"),
     )
 
 
@@ -303,6 +305,33 @@ def _add_behavior_flags(p: argparse.ArgumentParser) -> None:
         help=(
             "UNSAFE: разрешить запуск с грязным workdir. Воркеры будут видеть "
             "committed-версию файлов, а не working tree. Только для отладки."
+        ),
+    )
+    p.add_argument(
+        "--per-task-review",
+        action="store_true",
+        help=(
+            "Запускать lightweight orchX-reviewer на дифф каждой задачи "
+            "перед её merge'ем в integration ветку. Любые blocking findings "
+            "отправляют задачу на retry через debugger. Полезно для крупных "
+            "задач — ловит bugs до того, как они накопятся."
+        ),
+    )
+    p.add_argument(
+        "--per-task-review-effort",
+        choices=["minimal", "low", "medium", "high", "xhigh", "max"],
+        default="medium",
+        help="Effort для pre-merge reviewer'а (по умолчанию medium).",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Продолжить незавершённый прогон того же task_id вместо того, "
+            "чтобы стереть `orchx/runs/<task_id>/` и начать с нуля. "
+            "Уже выполненные задачи (с success-result.json в интеграционной "
+            "ветке) пропускаются. Полезно для длинных runs, упавших по "
+            "infra-причине (ctrl+c, провал хост-машины, временный 5xx)."
         ),
     )
 
@@ -631,6 +660,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
                 config,
                 on_ctx_ready=_on_ctx,
                 on_init_progress=_on_init_progress,
+                resume=getattr(args, "resume", False),
             )
         except worktree.DirtyWorkingTreeError as e:
             # Грязный workdir — пользовательская ошибка, не баг кода. Показываем
@@ -732,6 +762,9 @@ async def _cmd_all(args: argparse.Namespace) -> int:
         replanner_effort=args.replanner_effort,
         auto_stash=args.auto_stash,
         allow_dirty=args.allow_dirty,
+        per_task_review=getattr(args, "per_task_review", False),
+        per_task_review_effort=getattr(args, "per_task_review_effort", "medium"),
+        resume=getattr(args, "resume", False),
     )
     return await _cmd_run(run_args)
 
@@ -778,7 +811,154 @@ def _build_parser() -> argparse.ArgumentParser:
     all_p.add_argument("task", help="Свободное описание задачи для роя")
     _add_behavior_flags(all_p)
 
+    list_p = sub.add_parser(
+        "list",
+        help="Список существующих run'ов (orchx/runs/<task_id>/)",
+    )
+    list_p.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Сколько последних run'ов показать (по умолчанию 20).",
+    )
+
+    logs_p = sub.add_parser(
+        "logs",
+        help="Просмотр логов run'а",
+    )
+    logs_p.add_argument(
+        "task_id",
+        nargs="?",
+        default=None,
+        help=(
+            "task_id run'а. Если не задан — берём самый свежий по mtime."
+        ),
+    )
+    logs_p.add_argument(
+        "--task",
+        default=None,
+        help="Subtask id. Покажет attempt-логи именно этой задачи.",
+    )
+    logs_p.add_argument(
+        "--tail",
+        type=int,
+        default=80,
+        help="Сколько последних строк показать (по умолчанию 80; 0 — весь файл).",
+    )
+
     return p
+
+
+async def _cmd_list(args: argparse.Namespace) -> int:
+    """Показать список run'ов в `orchx/runs/`."""
+    repo_root = _detect_repo_root()
+    runs_dir = paths.runs_dir(repo_root)
+    if not runs_dir.exists():
+        tui.print_dim("(no runs yet)")
+        return 0
+    candidates = sorted(
+        (p for p in runs_dir.iterdir() if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[: max(1, args.limit)]
+    if not candidates:
+        tui.print_dim("(no runs yet)")
+        return 0
+    tui.banner("orchX runs", f"{len(candidates)} most recent")
+    for p in candidates:
+        summary = paths.summary_path(repo_root, p.name)
+        plan = paths.plan_path(repo_root, p.name)
+        info_bits: list[str] = []
+        if plan.exists():
+            try:
+                pl = json.loads(plan.read_text(encoding="utf-8"))
+                phases = len(pl.get("phases") or []) or 1
+                tasks = len(pl.get("tasks") or []) or sum(
+                    len(ph.get("tasks") or []) for ph in (pl.get("phases") or [])
+                )
+                info_bits.append(f"{phases}ph/{tasks}t")
+            except Exception:  # noqa: BLE001
+                pass
+        if summary.exists():
+            try:
+                s = json.loads(summary.read_text(encoding="utf-8"))
+                c = s.get("counts", {})
+                ok = c.get("success", 0)
+                fail = c.get("failed", 0)
+                skip = c.get("skipped", 0)
+                info_bits.append(f"{ok}✓ {fail}✗ {skip}⊘")
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            info_bits.append("(no summary)")
+        info = " · ".join(info_bits) if info_bits else "—"
+        tui.kv(p.name, info)
+    return 0
+
+
+async def _cmd_logs(args: argparse.Namespace) -> int:
+    """Показать логи run'а."""
+    repo_root = _detect_repo_root()
+    runs_dir = paths.runs_dir(repo_root)
+    if not runs_dir.exists():
+        tui.print_error("no runs found in orchx/runs/")
+        return 1
+    if args.task_id:
+        run_dir = runs_dir / args.task_id
+        if not run_dir.is_dir():
+            tui.print_error(f"run {args.task_id!r} not found at {run_dir}")
+            return 1
+    else:
+        candidates = sorted(
+            (p for p in runs_dir.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            tui.print_error("no runs found")
+            return 1
+        run_dir = candidates[0]
+        tui.print_dim(f"(using latest run: {run_dir.name})")
+
+    if args.task:
+        # Покажем все attempt'ы конкретной задачи.
+        log_glob = list((run_dir / "logs").glob(f"{args.task}.attempt*.log"))
+        if not log_glob:
+            tui.print_error(f"no attempt logs for task {args.task!r} in {run_dir}")
+            return 1
+        log_glob.sort(key=lambda p: p.name)
+        for log_file in log_glob:
+            tui.banner(log_file.name)
+            _print_tail(log_file, args.tail)
+        return 0
+
+    # Иначе показываем главный orchx.log.
+    main_log = paths.orchx_log_path(repo_root, run_dir.name)
+    if main_log.exists():
+        tui.banner(main_log.name)
+        _print_tail(main_log, args.tail)
+    dispatcher_log = paths.dispatcher_log_path(repo_root, run_dir.name)
+    if dispatcher_log.exists():
+        tui.banner(dispatcher_log.name)
+        _print_tail(dispatcher_log, args.tail)
+    return 0
+
+
+def _print_tail(path: Path, n: int) -> None:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as e:
+        tui.print_error(f"could not read {path}: {e}")
+        return
+    if n <= 0 or len(lines) <= n:
+        tail = lines
+    else:
+        tail = lines[-n:]
+        tui.print_dim(
+            f"(showing last {len(tail)} of {len(lines)} lines; full file: {path})"
+        )
+    for ln in tail:
+        tui.out(ln)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -794,6 +974,8 @@ def main(argv: list[str] | None = None) -> int:
         "plan": _cmd_plan,
         "run": _cmd_run,
         "all": _cmd_all,
+        "list": _cmd_list,
+        "logs": _cmd_logs,
     }[args.cmd]
     try:
         return asyncio.run(handler(args))

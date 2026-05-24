@@ -5,6 +5,14 @@ In-process замена ``kilo run --auto --agent orchX-<role> "<prompt>"``.
 Контракт ``WorkerOutcome`` совместим со старым ``runner.WorkerOutcome``,
 поэтому ``orchestrator.py`` не меняется.
 
+**Compaction.** Когда диалог разрастается до ~75% от ``context_window``
+модели, мы делаем один проход «summarize» — LLM получает специальный
+prompt и сжимает старые сообщения в одно `role=user` summary. Это
+позволяет воркерам с большими scope (debugger на сложном баге,
+reviewer на 30-файловом PR'е) не упираться в context limit провайдера.
+Поддерживается как Anthropic (`thinking: adaptive`), так и OpenAI
+o-series, и любой другой OpenAI-совместимый Proxy.
+
 Коды возврата:
 - ``0``  — модель сама закончила (отдала assistant-ход без tool_calls).
 - ``124`` — wall-clock timeout (``timeout_s``).
@@ -43,10 +51,199 @@ class WorkerOutcome:
     stderr: str
     timed_out: bool
     duration_s: float
+    input_tokens: int = 0
+    """Сумма input-токенов за все LLM-вызовы воркера (если Proxy сообщал)."""
+    output_tokens: int = 0
+    """Сумма output-токенов за все LLM-вызовы воркера."""
+    llm_calls: int = 0
+    """Количество LLM-вызовов в этом воркере (для cost-analysis)."""
+    compactions: int = 0
+    """Сколько раз история была сжата компактором."""
 
 
 # Сколько символов tool-результата кладём в лог (не в LLM-сообщение).
 _LOG_TOOL_RESULT_SNIPPET = 400
+
+
+# Эвристика context window'а провайдера. Берётся из переменной окружения
+# ORCHX_CONTEXT_WINDOW (если задана), иначе используем дефолт под Claude
+# Sonnet 4.6 / Opus 4.7 (1M) — большинство современных моделей выше.
+# Для не-Claude через Proxy 200k — безопасный нижний порог.
+def _context_window_chars(model: str) -> int:
+    """Возвращает context window провайдера в символах (примерно 3.5 char/token)."""
+    import os
+
+    raw = os.environ.get("ORCHX_CONTEXT_WINDOW")
+    if raw:
+        try:
+            tokens = int(raw)
+            return tokens * 4  # консервативный char→token коэффициент.
+        except ValueError:
+            pass
+    m = model.lower()
+    if "claude" in m or "anthropic" in m:
+        # Sonnet/Opus 4.6+ держат 1M; берём 950k чтобы был запас.
+        return 950_000 * 4
+    if "gemini" in m:
+        return 950_000 * 4  # 1M
+    if "gpt-5" in m or m.startswith(("o3", "o4")) or "openai/o" in m:
+        return 200_000 * 4
+    # Conservative default.
+    return 128_000 * 4
+
+
+def _approx_messages_chars(messages: list[dict[str, Any]]) -> int:
+    """Грубая оценка размера messages в символах."""
+    n = 0
+    for msg in messages:
+        c = msg.get("content")
+        if isinstance(c, str):
+            n += len(c)
+        elif isinstance(c, list):
+            for piece in c:
+                if isinstance(piece, dict):
+                    txt = piece.get("text") or piece.get("content")
+                    if isinstance(txt, str):
+                        n += len(txt)
+        # tool_calls в assistant-ходе.
+        for tc in msg.get("tool_calls", []) or []:
+            fn = (tc or {}).get("function") or {}
+            n += len(fn.get("name", "")) + len(fn.get("arguments", ""))
+    return n
+
+
+_COMPACTION_SUMMARY_PROMPT = """Ты — компактор контекста. Текущий диалог \
+agent loop разрастается; нужно сжать историю до момента «прямо сейчас».
+
+Сохрани:
+- какая исходная задача стоит перед воркером (из task.md);
+- какие файлы воркер уже прочитал и что в них нашёл (с путями + краткие \
+факты);
+- какие правки уже сделаны (списком файлов с однострочным описанием);
+- какие tools и команды уже запускались и что они вернули (PASS/FAIL + \
+суть);
+- какие гипотезы / промежуточные выводы зафиксированы;
+- любые security-relevant constraints (file_scope, allow-list bash-команд, \
+явные деnies);
+- последний намеченный план действий.
+
+Не отбрасывай ни одного результата acceptance-проверки или error-сообщения, \
+если оно не повторяется. Сжимай в plain Markdown без воды. Финальная длина \
+— до 8 коротких параграфов или 40 bullet-points.
+"""
+
+
+async def _maybe_compact_messages(
+    *,
+    role_llm: LLMClient,
+    messages: list[dict[str, Any]],
+    log_fh,
+    threshold_chars: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Если ``messages`` превышает порог — сжать всё кроме system + tail.
+
+    Стратегия: оставляем первое system-сообщение, последние 4 ходов
+    (tool-results + последний assistant), всё посередине заменяем на одно
+    user-сообщение с summary.
+
+    Returns:
+        (new_messages, compacted). ``compacted=True`` означает, что мы
+        реально сделали LLM-call на summary.
+    """
+    size = _approx_messages_chars(messages)
+    if size < threshold_chars:
+        return messages, False
+    if len(messages) <= 6:
+        # Слишком мало для compaction — ничего не выиграем.
+        return messages, False
+
+    # Найдём первый system, оставим последние 4 ходов.
+    system_idx = next(
+        (i for i, m in enumerate(messages) if m.get("role") == "system"),
+        None,
+    )
+    head: list[dict[str, Any]] = []
+    if system_idx is not None:
+        head = messages[: system_idx + 1]
+    tail_start = max(len(messages) - 4, system_idx + 1 if system_idx is not None else 0)
+    tail = messages[tail_start:]
+    middle = messages[len(head) : tail_start]
+    if not middle:
+        return messages, False
+
+    log_fh.write(
+        f"\n=== compaction trigger: size~{size} chars >= {threshold_chars} "
+        f"chars; compacting {len(middle)} middle messages ===\n"
+    )
+    log_fh.flush()
+
+    # Готовим input для compactor'а.
+    middle_text_parts: list[str] = []
+    for m in middle:
+        role = m.get("role", "")
+        content = m.get("content")
+        if isinstance(content, str):
+            middle_text_parts.append(f"## {role}\n{content}")
+        elif isinstance(content, list):
+            joined = "\n".join(
+                str(p.get("text") or p.get("content") or "")
+                for p in content
+                if isinstance(p, dict)
+            )
+            middle_text_parts.append(f"## {role}\n{joined}")
+        # tool_calls
+        for tc in m.get("tool_calls", []) or []:
+            fn = (tc or {}).get("function") or {}
+            middle_text_parts.append(
+                f"### tool_call {fn.get('name', '')}\nargs: {fn.get('arguments', '')}"
+            )
+    middle_text = "\n\n".join(middle_text_parts)
+
+    summarizer_messages = [
+        {"role": "system", "content": _COMPACTION_SUMMARY_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                "Сожми следующую часть истории agent loop. Верни plain "
+                "Markdown без преамбулы и без финальных вопросов.\n\n"
+                "---\n\n" + middle_text
+            ),
+        },
+    ]
+    try:
+        resp = await role_llm.chat(messages=summarizer_messages, tools=None)
+        summary_text = (resp.text or "").strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("compaction failed: %s — leaving messages as-is", e)
+        log_fh.write(f"\n[compaction-error] {e!r}\n")
+        log_fh.flush()
+        return messages, False
+
+    if not summary_text:
+        log_fh.write("\n[compaction-error] empty summary returned\n")
+        log_fh.flush()
+        return messages, False
+
+    log_fh.write(f"\n[compaction-summary]\n{summary_text}\n")
+    log_fh.flush()
+
+    new_messages = (
+        list(head)
+        + [
+            {
+                "role": "user",
+                "content": (
+                    "## Compacted history\n\nThe earlier portion of this "
+                    "agent-loop conversation was summarized to save context. "
+                    "Below is the summary; treat it as authoritative for "
+                    "what's been read/edited/run so far. Continue from "
+                    "where the recent messages left off.\n\n" + summary_text
+                ),
+            }
+        ]
+        + list(tail)
+    )
+    return new_messages, True
 
 
 async def run_agent(
@@ -129,9 +326,17 @@ async def run_agent(
     )
     log_fh.flush()
 
+    # Compaction-порог: 75% от приблизительного context window.
+    context_window = _context_window_chars(role_llm.model)
+    compaction_threshold = int(context_window * 0.75)
+
     full_text: list[str] = []
     timed_out = False
     rc = -1
+    compactions_done = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    llm_calls = 0
 
     # Стрим-колбэки определены один раз — оба замыкания захватывают
     # loop-invariant ``log_fh`` и ``_activity``, перецеплять их по шагу
@@ -160,6 +365,18 @@ async def run_agent(
                 rc = 124
                 break
 
+            # Compaction: если messages разросся, пробуем сжать. Делаем
+            # не чаще одного раза за шаг.
+            messages, compacted = await _maybe_compact_messages(
+                role_llm=role_llm,
+                messages=messages,
+                log_fh=log_fh,
+                threshold_chars=compaction_threshold,
+            )
+            if compacted:
+                compactions_done += 1
+                _activity(f"compacted history (#{compactions_done})")
+
             log_fh.write(f"\n=== step {step} (assistant) ===\n")
             log_fh.flush()
 
@@ -175,6 +392,9 @@ async def run_agent(
                 log_fh.write(f"\n[llm-error] {e!r}\n")
                 rc = -1
                 break
+            llm_calls += 1
+            total_input_tokens += resp.input_tokens or 0
+            total_output_tokens += resp.output_tokens or 0
 
             if resp.text:
                 full_text.append(resp.text)
@@ -241,7 +461,8 @@ async def run_agent(
         duration = time.monotonic() - started
         try:
             log_fh.write(
-                f"\n# returncode={rc} timed_out={timed_out} duration={duration:.1f}s\n"
+                f"\n# returncode={rc} timed_out={timed_out} duration={duration:.1f}s "
+                f"compactions={compactions_done}\n"
             )
         except Exception:  # noqa: BLE001
             pass
@@ -256,4 +477,8 @@ async def run_agent(
         stderr="",
         timed_out=timed_out,
         duration_s=time.monotonic() - started,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
+        llm_calls=llm_calls,
+        compactions=compactions_done,
     )

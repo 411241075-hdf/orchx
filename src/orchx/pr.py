@@ -529,6 +529,19 @@ def render_pr_body(summary: dict) -> str:
         f"- **Время выполнения:** {summary['wall_seconds']}с",
         f"- **Перепланирований:** {summary.get('replan_count', 0)}",
     ]
+    metrics = summary.get("metrics") or {}
+    if metrics.get("total_tokens"):
+        lines.append(
+            f"- **Токенов:** {metrics['total_tokens']:,} "
+            f"(input {metrics.get('total_input_tokens', 0):,}, "
+            f"output {metrics.get('total_output_tokens', 0):,})"
+        )
+    if metrics.get("total_llm_calls"):
+        lines.append(f"- **LLM-вызовов:** {metrics['total_llm_calls']}")
+    if metrics.get("total_compactions"):
+        lines.append(
+            f"- **History compactions:** {metrics['total_compactions']}"
+        )
     if summary.get("aborted"):
         lines.append(f"- **Прерван:** {summary.get('abort_reason') or 'да'}")
     if summary.get("halt_reason"):
@@ -630,6 +643,56 @@ def render_pr_body(summary: dict) -> str:
                 notes = notes[:297] + "..."
             lines.append(f"| `{t['id']}` | {t['agent']} | {t['attempts']} | {notes} |")
         lines.append("")
+
+    # Code review findings (если reviewer заполнил review_report).
+    review = summary.get("review") or {}
+    report = review.get("report") or {}
+    findings = report.get("findings") or []
+    if findings:
+        lines.append("## Code review findings")
+        lines.append("")
+        if report.get("summary"):
+            lines.append(report["summary"])
+            lines.append("")
+        # Группа: blocking → non-blocking → nit. Внутри — таблица.
+        groups: dict[str, list[dict]] = {
+            "blocking": [],
+            "non-blocking": [],
+            "nit": [],
+        }
+        for f in findings:
+            sev = f.get("severity")
+            if sev in groups:
+                groups[sev].append(f)
+        sev_titles = {
+            "blocking": "✗ Blocking",
+            "non-blocking": "● Non-blocking",
+            "nit": "○ Nits",
+        }
+        for sev, items in groups.items():
+            if not items:
+                continue
+            lines.append(f"### {sev_titles[sev]} ({len(items)})")
+            lines.append("")
+            lines.append("| Файл | Категория | Описание | Сценарий |")
+            lines.append("| --- | --- | --- | --- |")
+            for f in items:
+                file_part = f.get("file") or "—"
+                if f.get("line") and file_part != "—":
+                    file_part = f"`{file_part}:{f['line']}`"
+                elif file_part != "—":
+                    file_part = f"`{file_part}`"
+                desc = (f.get("description") or "").replace("|", "\\|").replace("\n", " ")
+                if len(desc) > 300:
+                    desc = desc[:297] + "..."
+                scen = (f.get("failure_scenario") or "").replace("|", "\\|").replace("\n", " ")
+                if len(scen) > 300:
+                    scen = scen[:297] + "..."
+                cat = f.get("category") or "other"
+                lines.append(
+                    f"| {file_part} | {cat} | {desc} | {scen or '—'} |"
+                )
+            lines.append("")
 
     lines += [
         "Создано с помощью **orchX**.",

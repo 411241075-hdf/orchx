@@ -32,6 +32,10 @@
       "items": { "$ref": "#/$defs/FollowupSuggestion" },
       "default": [],
       "description": "Подсказки worker'а диспетчеру: какие задачи он рекомендует добавить в DAG (например, написать тесты к тому, что только что реализовано)."
+    },
+    "review_report": {
+      "$ref": "#/$defs/ReviewReport",
+      "description": "Структурированный отчёт code-review (заполняет orchX-reviewer и orchX-pre-merge-reviewer). Опционален для других ролей."
     }
   },
   "$defs": {
@@ -43,6 +47,72 @@
         "agent": { "type": "string" },
         "goal": { "type": "string" },
         "reason": { "type": "string" }
+      }
+    },
+    "ReviewReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findings"],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Опциональная 1-2-параграф сводка про общий характер изменений и ключевые риски."
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReviewFinding" }
+        }
+      }
+    },
+    "ReviewFinding": {
+      "type": "object",
+      "required": ["severity", "category", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Путь файла относительно корня репо. Опционален для cross-cutting findings."
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-индексная строка в файле."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["blocking", "non-blocking", "nit"],
+          "description": "blocking — мерджить нельзя без фикса. non-blocking — реальная проблема, но можно мерджить. nit — стиль/preference."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "bug",
+            "security",
+            "perf",
+            "contract_breaking",
+            "test_coverage",
+            "style",
+            "docs",
+            "other"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Что не так."
+        },
+        "failure_scenario": {
+          "type": "string",
+          "description": "Конкретный сценарий, при котором проблема проявляется."
+        },
+        "suggestion": {
+          "type": "string",
+          "description": "Опциональное предложение фикса."
+        },
+        "verifier_verdict": {
+          "type": "string",
+          "enum": ["confirmed", "plausible", "refuted"],
+          "description": "Заполняется verifier-фазой (если включена). Если поле есть — finding прошёл verification."
+        }
       }
     }
   }
