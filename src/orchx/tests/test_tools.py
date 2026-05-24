@@ -522,22 +522,38 @@ async def test_webfetch_rejects_non_http_scheme(tmp_path: Path) -> None:
     assert "scheme" in r.content.lower()
 
 
-def test_webfetch_strip_html_removes_tags() -> None:
-    """HTML с тегами должен превратиться в plain text при format=markdown."""
-    from orchx.agent.tools.web import _strip_html_to_text
+def test_webfetch_html_to_markdown_via_markdownify() -> None:
+    """HTML конвертируется markdownify'ем; noise-теги (style/nav) удаляются."""
+    import pytest
+
+    pytest.importorskip("markdownify")
+    from orchx.agent.tools.web import _html_to_markdown
 
     html_str = (
         "<html><head><style>x { color: red; }</style></head>"
-        "<body><h1>Title</h1><p>hello <b>world</b></p>"
-        '<a href="https://x.com">link</a></body></html>'
+        "<body><nav>menu menu menu</nav>"
+        "<h1>Title</h1><p>hello <b>world</b></p>"
+        '<a href="https://x.com">link</a>'
+        "<ul><li>one</li><li>two</li></ul>"
+        "<footer>copyright</footer>"
+        "</body></html>"
     )
-    out = _strip_html_to_text(html_str)
-    assert "<" not in out and ">" not in out
+    out, err = _html_to_markdown(html_str)
+    assert err is None
+    # markdownify не должен оставить сырые теги.
+    assert "<style" not in out and "<nav" not in out and "<footer" not in out
+    # ATX-заголовок.
     assert "# Title" in out
-    assert "hello world" in out
+    # Жирный + текст.
+    assert "world" in out
+    # Markdown-ссылка.
     assert "[link](https://x.com)" in out
-    # style-блок должен быть удалён.
+    # Список с дефисами.
+    assert "- one" in out and "- two" in out
+    # Шумные блоки полностью удалены.
     assert "color: red" not in out
+    assert "menu menu" not in out
+    assert "copyright" not in out
 
 
 def test_permission_denied_helper_format() -> None:

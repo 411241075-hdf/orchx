@@ -8,7 +8,7 @@ Wall-clock timeout — независимый от ``proc.communicate()``: stdou
 читаются параллельными корутинами, и если процесс не завершается за
 ``timeout_ms``, он принудительно убивается с фиксацией partial-вывода.
 
-Output обрезается до ~50KB; полный transcript параллельно пишется в
+Output обрезается до ~128KB; полный transcript параллельно пишется в
 sidecar-файл рядом с лог-файлом воркера, чтобы debugger мог прочитать
 полный результат при retry'е.
 """
@@ -25,7 +25,7 @@ from pathlib import Path
 from . import Tool, ToolContext, ToolResult, permission_denied
 from .fs import _ensure_within
 
-_TRUNCATION_LIMIT = 50_000  # ~50KB на каждый из stdout/stderr.
+_TRUNCATION_LIMIT = 128_000  # ~128KB на каждый из stdout/stderr.
 
 
 class BashTool(Tool):
@@ -37,7 +37,7 @@ class BashTool(Tool):
         "command is parsed for prefix and matched against the agent's "
         "bash allow-list. Composite commands (``&&``, ``||``, ``;``, "
         "``|``, ``$(...)``, backticks) are blocked as command injection. "
-        "Output is hard-capped to ~50KB per stream; if the process "
+        "Output is hard-capped to ~128KB per stream; if the process "
         "doesn't finish within timeout_ms it is killed and partial "
         "output is returned."
     )
@@ -238,12 +238,12 @@ class BashTool(Tool):
         if out:
             display_out = out
             if out_truncated:
-                display_out += "\n... (stdout truncated at 50KB)"
+                display_out += "\n... (stdout truncated at 128KB)"
             body_parts.append(f"<stdout>\n{display_out}</stdout>")
         if err:
             display_err = err
             if err_truncated:
-                display_err += "\n... (stderr truncated at 50KB)"
+                display_err += "\n... (stderr truncated at 128KB)"
             body_parts.append(f"<stderr>\n{display_err}</stderr>")
         body = "\n".join(body_parts)
 
