@@ -38,3 +38,6 @@ env/
 # Tests artefacts
 .coverage
 htmlcov/
+
+# Serena
+.serena/
