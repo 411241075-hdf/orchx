@@ -1,28 +1,30 @@
 <div align="center">
 
-                  ██████                           
-             ████████████████                      
-           █████████████████████         █████████ 
-         █████████████████████████      ████████   
-        ██████            ████████     ████████    
-       █████                ████████ ████████      
-      ████                   ███████████████       
-      ███                      ████████████        
-       ███                      █████████          
-        ███                    ███████████         
-         ███                  █████████████        
-           ██                ███████ ████████      
-             █             ███████     ███████     
-                         ███████        ████████   
-                      █████████          █████████ 
-                                                   
-                                                   
-                               ██                  
-       ███████                 ██       ████  ████ 
-      █       █   ████  ██████ ███████    ██████   
-     ██       ██  ██   █       ██    ██     ██     
-      █       █   █    █       ██    ██   ██████   
-       ███████    █     ██████ ██    ██ ████  ████ 
+```text
+                  ██████
+             ████████████████
+           █████████████████████         █████████
+         █████████████████████████      ████████
+        ██████            ████████     ████████
+       █████                ████████ ████████
+      ████                   ███████████████
+      ███                      ████████████
+       ███                      █████████
+        ███                    ███████████
+         ███                  █████████████
+           ██                ███████ ████████
+             █             ███████     ███████
+                         ███████        ████████
+                      █████████          █████████
+
+
+                               ██
+       ███████                 ██       ████  ████
+      █       █   ████  ██████ ███████    ██████
+     ██       ██  ██   █       ██    ██     ██
+      █       █   █    █       ██    ██   ██████
+       ███████    █     ██████ ██    ██ ████  ████
+```
 
 **ТЗ → DAG → параллельные агенты → PR.**
 
@@ -31,7 +33,7 @@ Headless мультиагентный рой для git-проектов: дек
 открывает pull-request. Решение «мержить» — за человеком.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Python: 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
+[![Python: 3.13+](https://img.shields.io/badge/python-3.13%2B-3776ab?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
 [![Tests: 254 passed](https://img.shields.io/badge/tests-254%20passed-success?style=flat-square)](src/orchx/tests)
 [![Status: 0.2-alpha](https://img.shields.io/badge/status-0.2--alpha-orange?style=flat-square)](docs/changelog.md)
 
@@ -78,8 +80,8 @@ Headless мультиагентный рой для git-проектов: дек
 
 ## Что внутри
 
-|                               |                                                                                                                                                                 |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Возможность                   | Описание                                                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Declarative `plan.json`**   | FLAT или PHASED-планы с явными acceptance checks. Никакого «agent loops до победного» — есть план, есть критерии.                                               |
 | **PHASED checkpoints**        | Большие ТЗ дробятся на фазы, между ними — merge commit в integration. Откат — это `git revert` одной фазы.                                                      |
 | **Auto-replan**               | Фаза провалилась → orchX-planner получает контекст провала и переписывает остаток плана. До `max_replans` раз.                                                  |
@@ -87,7 +89,7 @@ Headless мультиагентный рой для git-проектов: дек
 | **Pre-merge per-task review** | Опционально reviewer прогоняется на дифф каждой задачи **до** merge. Ловит correctness-bugs пока дифф маленький.                                                |
 | **Merger при конфликтах**     | На merge-конфликте спавнится отдельный `orchX-merger` — выбирает осмысленную композицию для shared registry-файлов.                                             |
 | **Git worktree isolation**    | Каждый воркер в своём worktree — параллельные правки не топчут друг друга.                                                                                      |
-| **Bash sandbox**              | Prefix-extract + injection-guard: `&&`, `;`, `                                                                                                                  | `, `$(...)`, backtick'и блокируются как injection до сверки с allow-list. |
+| **Bash sandbox**              | Prefix-extract + injection-guard: `&&`, `;`, `\|`, `$(...)`, backtick'и блокируются как injection до сверки с allow-list.                                       |
 | **Path-gated edit**           | Воркер может писать только в свой worktree + только в файлы из своего `file_scope` + edit-permissions.                                                          |
 | **Provider-aware effort**     | `low / medium / high / xhigh / max` маппится в provider-specific параметр (`reasoning_effort` для OpenAI, `thinking` для Claude, `thinking_config` для Gemini). |
 | **Compaction**                | На ~75% context window — single-pass summary, чтобы не врезаться в стенку.                                                                                      |
@@ -204,7 +206,7 @@ reactions:
 
 ## Требования
 
-- Python ≥ 3.11
+- Python ≥ 3.13
 - `git` ≥ 2.30 (для worktree)
 - `gh` CLI (для авто-создания PR): `brew install gh && gh auth login`
 - OpenAI-совместимый LLM endpoint с tool-calling (OpenRouter, vLLM, Anthropic Proxy, Ollama-shim, …)

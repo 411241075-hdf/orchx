@@ -20,7 +20,7 @@ Versioning: [Semantic Versioning](https://semver.org/) (pre-1.0 — minor мож
 - **P0.2**: Plugin-slot system (5 slots — runtime, tracker, scm, notifier, memory). 10 дефолтных реализаций. Discovery через `importlib.metadata` entry-points. Каждый сторонний пакет может зарегистрировать свой плагин.
 - **P0.3**: SQLite + FTS5 memory backend с опциональными embeddings (OpenAI-compatible endpoint).
 - **P0.4**: PR feedback loop — `orchx watch <task_id>` + конфиг `reactions:` в `.orchx/config.yaml` (ci_failed → debugger, changes_requested → implementer, approved_and_green → notify/auto-merge).
-- **P0.5**: GitHub Actions CI (lint + typecheck + tests py3.11/3.12 на ubuntu+macos). Coverage report. FakeLLMClient для integration-тестов. `Makefile`. 254 tests passing (было 118).
+- **P0.5**: GitHub Actions CI (lint + typecheck + tests py3.13 на ubuntu+macos). Coverage report. FakeLLMClient для integration-тестов. `Makefile`. 254 tests passing (было 118).
 
 ### Added (P1 — важные)
 
@@ -68,7 +68,7 @@ Versioning: [Semantic Versioning](https://semver.org/) (pre-1.0 — minor мож
 
 ### Breaking
 
-- Минимальная Python версия осталась 3.11. **Python 3.14**: editable-install требует `--config-settings editable_mode=compat` (см. Makefile, `make install`).
+- Минимальная Python версия — 3.13. **Python 3.14**: editable-install требует `--config-settings editable_mode=compat` (см. Makefile, `make install`).
 - `orchx watch` и `orchx plugins list` и `orchx dashboard` — новые CLI commands.
 - Новые CLI флаги: `--cleanup-worktrees`, `--max-cost-usd`, `--no-auto-fixup` (на `run` / `all`).
 - `WorkerOutcome.cost_usd` (новое поле) — внешние интеграции должны учитывать.

@@ -515,7 +515,7 @@ changes-requested, approved-and-green — это его killer-feature).
       runs-on: ubuntu-latest
       strategy:
         matrix:
-          python: ['3.13', '3.12']
+          python: ['3.13']
       steps:
         - uses: actions/checkout@v4
         - uses: actions/setup-python@v5

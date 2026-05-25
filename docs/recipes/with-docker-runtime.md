@@ -21,7 +21,7 @@ make worker-image
 
 Image содержит:
 
-- Python 3.11 + git + ripgrep + curl
+- Python 3.13 + git + ripgrep + curl
 - orchx + все зависимости
 
 ## 3. Config
