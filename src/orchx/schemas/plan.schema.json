@@ -26,6 +26,11 @@
       "default": [],
       "description": "Файлы спецификации/ТЗ, на которые опирается план. Replanner перечитывает их при перепланировании."
     },
+    "tracker_task_id": {
+      "type": "string",
+      "default": "",
+      "description": "Опциональный composite id задачи во внешнем трекере (GitHub Projects: \"<project_item_id>:<issue_number>\"). Используется orchestrator'ом для авто-обновления статуса карточки и комментария к issue по завершении. Не путать с task_id (slug плана для git-веток). Обычно проставляется CLI-флагом --tracker-task или env ORCHX_TRACKER_TASK_ID, а не planner'ом."
+    },
     "global_budget": {
       "type": "object",
       "additionalProperties": false,

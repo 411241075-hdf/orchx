@@ -128,6 +128,12 @@ class Plan:
     global_budget: GlobalBudget = field(default_factory=GlobalBudget)
     summary: str = ""
     spec_files: tuple[str, ...] = ()
+    # Опциональный composite id из внешнего трекера (например, GitHub Projects:
+    # ``"PVTI_lAHO...:114"``). Используется orchestrator'ом для ``tracker.update_status``,
+    # чтобы карточка в Projects двигалась автоматически. Если не задан — orchestrator
+    # передаёт ``task_id`` (slug), и для GitHub Projects move_task fallback'ом
+    # промахнётся (но коммент в issue по номеру всё ещё может пройти).
+    tracker_task_id: str = ""
 
     @property
     def tasks(self) -> tuple[TaskSpec, ...]:
@@ -497,6 +503,9 @@ def load_plan(path: Path) -> Plan:
         isinstance(s, str) for s in spec_files_raw
     ):
         raise ValueError("plan.spec_files must be a list of strings")
+    tracker_task_id_raw = raw.get("tracker_task_id") or ""
+    if not isinstance(tracker_task_id_raw, str):
+        raise ValueError("plan.tracker_task_id must be a string")
     return Plan(
         task_id=task_id,
         base_branch=base_branch,
@@ -504,6 +513,7 @@ def load_plan(path: Path) -> Plan:
         global_budget=budget,
         summary=str(raw.get("summary") or ""),
         spec_files=tuple(spec_files_raw),
+        tracker_task_id=tracker_task_id_raw,
     )
 
 

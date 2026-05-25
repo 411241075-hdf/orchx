@@ -107,7 +107,38 @@ orchx logs                 # лог последнего прогона
 orchx watch                # P0.4 — feedback loop на открытый PR
 orchx dashboard --port X   # P1.4 — web-дашборд (нужен 'orchx[server]')
 orchx plugins list         # P0.2 — все зарегистрированные плагины
+
+orchx tasks ready          # задачи в Ready-колонке трекера
+orchx tasks pick           # атомарно забрать следующую (двинет в In Progress)
+orchx tasks pick --run     # pick + сразу `orchx all` с правильным tracker-id
+orchx tasks move <id> <col># вручную двинуть карточку
 ```
+
+### Замкнутый цикл с GitHub Projects
+
+Если в `.orchx/config.yaml` подключён `tracker: github-projects`, рой
+сам двигает карточку Backlog → Ready → In Progress → Done и оставляет
+коммент в issue со ссылкой на PR. Чтобы это сработало, orchestrator'у
+нужен composite id трекера (например, `PVTI_lAHO...:114`) — slug-имя
+плана для git-веток (`task_id`) этого делать не умеет.
+
+Передаётся одним из трёх способов:
+
+```bash
+# 1) Самый удобный: пропустит pick + сразу запустит рой и закроет цикл.
+orchx tasks pick --run
+
+# 2) Явный флаг для всех команд (plan / run / all).
+orchx all --tracker-task "PVTI_lAHO...:114" "<задача>"
+
+# 3) Через окружение — удобно в скриптах.
+ORCHX_TRACKER_TASK_ID="PVTI_lAHO...:114" orchx all "<задача>"
+```
+
+Под капотом CLI добавляет поле `tracker_task_id` в `plan.json`, а
+orchestrator при старте/финале вызывает `tracker.update_status` именно
+с этим composite id (а не со slug'ом). Для других трекеров поле тоже
+работает — формат composite id определяет конкретный плагин.
 
 ## Плагины
 

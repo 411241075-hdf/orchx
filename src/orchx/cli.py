@@ -462,6 +462,19 @@ def _add_behavior_flags(p: argparse.ArgumentParser) -> None:
             "infra-причине (ctrl+c, провал хост-машины, временный 5xx)."
         ),
     )
+    p.add_argument(
+        "--tracker-task",
+        default=None,
+        metavar="ID",
+        help=(
+            "Composite id задачи во внешнем трекере (например, GitHub "
+            "Projects: 'PVTI_lAHO...:114'). Записывается в "
+            "plan.tracker_task_id и используется orchestrator'ом для "
+            "автоматического update_status (двинуть карточку в Done / "
+            "оставить коммент в issue со ссылкой на PR) по завершении "
+            "прогона. Также читается из env ORCHX_TRACKER_TASK_ID."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +525,23 @@ async def _run_planner_quiet(
     return outcome.returncode
 
 
+def _resolve_tracker_task_id(args: argparse.Namespace) -> str:
+    """Вернуть composite tracker task id из CLI или env, если задан.
+
+    Приоритет: явный CLI-флаг ``--tracker-task`` > env ``ORCHX_TRACKER_TASK_ID``.
+    Возвращает пустую строку, если ни там, ни там не задано.
+
+    Composite id (например, GitHub Projects ``"PVTI_lAHO...:114"``) не годится
+    как ``plan.task_id`` (там в slug-имени бранчей запрещено двоеточие),
+    поэтому хранится отдельно — в ``plan.tracker_task_id``.
+    """
+    cli_val = getattr(args, "tracker_task", None)
+    if cli_val:
+        return str(cli_val).strip()
+    env_val = os.environ.get("ORCHX_TRACKER_TASK_ID", "").strip()
+    return env_val
+
+
 async def _cmd_plan(args: argparse.Namespace) -> int:
     """Запустить orchX-planner и записать план в ``orchx/runs/<task_id>/plan.json``.
 
@@ -520,6 +550,12 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
     планирования cli читает task_id из плана и перемещает всё в
     ``orchx/runs/<task_id>/`` (полностью затирая старую папку с тем же
     task_id, если она была).
+
+    Если задан ``--tracker-task <composite_id>`` (или env
+    ``ORCHX_TRACKER_TASK_ID``), CLI после успешного планирования
+    впишет это значение в ``plan.tracker_task_id`` — так orchestrator
+    сможет двинуть карточку в трекере по композитному id, не полагаясь
+    на то, что planner LLM сам угадает формат.
     """
     repo_root = _detect_repo_root()
     try:
@@ -575,6 +611,24 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
     if not isinstance(task_id, str) or not task_id:
         tui.print_error("Planner output missing required `task_id` field.")
         return 1
+
+    # Инжектим composite tracker id (если задан CLI-флагом / env) — так
+    # orchestrator сможет двинуть карточку, не надеясь, что planner сам
+    # угадал формат. Делаем это до wipe/move, чтобы поле попало в финальный
+    # plan.json.
+    tracker_task_id = _resolve_tracker_task_id(args)
+    if tracker_task_id:
+        existing = plan_data.get("tracker_task_id") or ""
+        if existing and existing != tracker_task_id:
+            tui.print_dim(
+                f"  overriding plan.tracker_task_id ({existing!r}) "
+                f"with CLI/env value ({tracker_task_id!r})"
+            )
+        plan_data["tracker_task_id"] = tracker_task_id
+        pending_plan.write_text(
+            json.dumps(plan_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     # Автокоррекция base_branch: если планировщик угадал ветку, которой
     # нет в этом репо — заменим на реальную дефолтную (origin/HEAD → main →
@@ -765,6 +819,26 @@ async def _cmd_run(args: argparse.Namespace) -> int:
         return 2
     config = _orchX_config_from_args(args)
 
+    # Если ``--tracker-task`` (или env) задан и в plan.json ещё нет этого
+    # поля — впишем сейчас, чтобы orchestrator подхватил его и двинул
+    # карточку по завершении. Это полезно когда plan.json сгенерирован
+    # отдельно (``orchx plan ...``), а потом запускается ``orchx run`` с
+    # tracker'ом.
+    tracker_task_override = _resolve_tracker_task_id(args)
+    if tracker_task_override:
+        try:
+            _peek_for_tracker = json.loads(plan_path.read_text(encoding="utf-8"))
+            if (_peek_for_tracker.get("tracker_task_id") or "") != tracker_task_override:
+                _peek_for_tracker["tracker_task_id"] = tracker_task_override
+                plan_path.write_text(
+                    json.dumps(_peek_for_tracker, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        except (OSError, json.JSONDecodeError) as e:
+            tui.print_dim(
+                f"  could not inject --tracker-task into {plan_path.name}: {e}"
+            )
+
     # Подгрузим план только для красивого intro-баннера; настоящая загрузка
     # происходит в orchestrator.run_orchX.
     try:
@@ -904,7 +978,10 @@ async def _cmd_run(args: argparse.Namespace) -> int:
 
 async def _cmd_all(args: argparse.Namespace) -> int:
     """Plan + run + PR одной командой."""
-    plan_args = argparse.Namespace(task=args.task, force=True)
+    tracker_task = getattr(args, "tracker_task", None)
+    plan_args = argparse.Namespace(
+        task=args.task, force=True, tracker_task=tracker_task
+    )
     rc = await _cmd_plan(plan_args)
     if rc != 0:
         return rc
@@ -928,7 +1005,11 @@ async def _cmd_all(args: argparse.Namespace) -> int:
         allow_dirty=args.allow_dirty,
         per_task_review=getattr(args, "per_task_review", False),
         per_task_review_effort=getattr(args, "per_task_review_effort", "medium"),
+        cleanup_worktrees=getattr(args, "cleanup_worktrees", False),
+        max_cost_usd=getattr(args, "max_cost_usd", None),
+        no_auto_fixup=getattr(args, "no_auto_fixup", False),
         resume=getattr(args, "resume", False),
+        tracker_task=tracker_task,
     )
     return await _cmd_run(run_args)
 
@@ -961,6 +1042,17 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_p.add_argument("task", help="Свободное описание задачи для роя")
     plan_p.add_argument(
         "--force", action="store_true", help="Перезаписать существующий plan.json"
+    )
+    plan_p.add_argument(
+        "--tracker-task",
+        default=None,
+        metavar="ID",
+        help=(
+            "Composite id задачи во внешнем трекере (например, GitHub "
+            "Projects: 'PVTI_lAHO...:114'). Запишется в "
+            "plan.tracker_task_id для авто-обновления статуса карточки "
+            "после прогона. Также читается из env ORCHX_TRACKER_TASK_ID."
+        ),
     )
 
     run_p = sub.add_parser(
@@ -1088,13 +1180,27 @@ def _build_parser() -> argparse.ArgumentParser:
     ready_sp.add_argument(
         "--limit", type=int, default=20, help="Сколько задач вывести (default 20)."
     )
-    tasks_sub.add_parser(
+    pick_sp = tasks_sub.add_parser(
         "pick",
         help=(
             "Атомарно забрать следующую задачу из Ready (переместит её в "
-            "In Progress) и напечатать тело."
+            "In Progress) и напечатать тело. С --run сразу запустит "
+            "`orchx all` с правильным tracker-id и body issue как prompt."
         ),
     )
+    pick_sp.add_argument(
+        "--run",
+        action="store_true",
+        help=(
+            "После pick'а сразу запустить `orchx all`: tracker_task_id "
+            "будет проставлен в plan.json автоматически, после успешного "
+            "PR карточка двинется в Done. Эквивалент:\n"
+            '  TID=$(orchx tasks pick) && orchx all --tracker-task "$TID" "$BODY"'
+        ),
+    )
+    # Behavior-флаги для случая --run (чтобы можно было ``orchx tasks pick
+    # --run --no-review --effort xhigh`` и т.п.).
+    _add_behavior_flags(pick_sp)
     move_sp = tasks_sub.add_parser(
         "move", help="Передвинуть задачу в указанную колонку."
     )
@@ -1473,9 +1579,49 @@ async def _cmd_tasks(args: argparse.Namespace) -> int:
         tui.out("--- task body ---")
         tui.out(task.body or "(empty)")
         tui.out("")
+
+        # --run: сразу замкнуть цикл (plan + run + PR + auto-move Done).
+        if getattr(args, "run", False):
+            prompt = (
+                f"{task.title}\n\n"
+                f"{task.body or ''}\n\n"
+                f"Tracker reference: {task.url or task.id}"
+            ).strip()
+            tui.print_step(
+                f"Launching `orchx all --tracker-task {task.id}`"
+            )
+            all_args = argparse.Namespace(
+                task=prompt,
+                tracker_task=task.id,
+                no_review=getattr(args, "no_review", False),
+                auto_followup=getattr(args, "auto_followup", False),
+                max_followup_depth=getattr(args, "max_followup_depth", 1),
+                no_debugger=getattr(args, "no_debugger", False),
+                no_merger=getattr(args, "no_merger", False),
+                no_supervisor=getattr(args, "no_supervisor", False),
+                supervisor_interval_s=getattr(args, "supervisor_interval_s", 30.0),
+                effort=getattr(args, "effort", "high"),
+                reviewer_effort=getattr(args, "reviewer_effort", "xhigh"),
+                debugger_effort=getattr(args, "debugger_effort", "xhigh"),
+                merger_effort=getattr(args, "merger_effort", "high"),
+                no_replan=getattr(args, "no_replan", False),
+                replanner_effort=getattr(args, "replanner_effort", "xhigh"),
+                auto_stash=getattr(args, "auto_stash", False),
+                allow_dirty=getattr(args, "allow_dirty", False),
+                per_task_review=getattr(args, "per_task_review", False),
+                per_task_review_effort=getattr(
+                    args, "per_task_review_effort", "medium"
+                ),
+                cleanup_worktrees=getattr(args, "cleanup_worktrees", False),
+                max_cost_usd=getattr(args, "max_cost_usd", None),
+                no_auto_fixup=getattr(args, "no_auto_fixup", False),
+                resume=getattr(args, "resume", False),
+            )
+            return await _cmd_all(all_args)
+
         tui.print_dim(
-            f'Next: orchx all "{task.title}"  '
-            f"(или передайте task.body как prompt)"
+            f'Next: orchx all --tracker-task "{task.id}" "<body>"  '
+            f"(or `orchx tasks pick --run` next time)"
         )
         return 0
 

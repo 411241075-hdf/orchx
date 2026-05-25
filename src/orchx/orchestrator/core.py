@@ -2429,10 +2429,14 @@ async def run_orchX(
             logger.warning("notifier run_started failed", exc_info=True)
 
     # 0.2.1: tracker update — отметим задачу как «в работе».
+    # ``tracker_task_id`` (если задан) — composite id из внешнего трекера
+    # (например, GitHub Projects ``PVTI_xxx:114``). Без него tracker может
+    # лишь оставить коммент по issue number, но не подвинет карточку.
+    tracker_id = ctx.plan.tracker_task_id or ctx.plan.task_id
     if ctx.tracker is not None:
         try:
             await ctx.tracker.update_status(
-                ctx.plan.task_id,
+                tracker_id,
                 "running",
                 f"orchX run started — integration: `{ctx.integration_branch}`",
             )
@@ -2593,7 +2597,7 @@ async def run_orchX(
             details_parts.append(f"Halt: {halt_reason}")
         try:
             await ctx.tracker.update_status(
-                ctx.plan.task_id,
+                ctx.plan.tracker_task_id or ctx.plan.task_id,
                 tracker_status,
                 "\n".join(details_parts),
             )
