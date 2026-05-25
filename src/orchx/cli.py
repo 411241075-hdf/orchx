@@ -62,6 +62,46 @@ def _detect_repo_root() -> Path:
     return Path(out)
 
 
+def _detect_default_branch(repo_root: Path) -> str:
+    """Угадать дефолтную ветку репо.
+
+    Порядок попыток:
+    1. ``git symbolic-ref refs/remotes/origin/HEAD`` (если есть upstream).
+    2. ``main`` если такая локальная ветка есть.
+    3. ``master`` если такая локальная ветка есть.
+    4. Текущая ветка (``git rev-parse --abbrev-ref HEAD``).
+    5. ``main`` как последний fallback.
+    """
+    def _git(*args: str) -> str | None:
+        try:
+            return subprocess.check_output(
+                ["git", *args], cwd=str(repo_root), text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip() or None
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+
+    # 1. origin/HEAD → ``origin/main``
+    sym = _git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if sym and sym.startswith("origin/"):
+        return sym.split("/", 1)[1]
+
+    # 2-3. main / master
+    branches = (_git("branch", "--list", "main", "master") or "").splitlines()
+    names = {b.strip(" *+").strip() for b in branches if b.strip()}
+    if "main" in names:
+        return "main"
+    if "master" in names:
+        return "master"
+
+    # 4. Текущая ветка
+    cur = _git("rev-parse", "--abbrev-ref", "HEAD")
+    if cur and cur != "HEAD":
+        return cur
+
+    return "main"
+
+
 def _parse_dotenv_file(env_path: Path) -> dict[str, str]:
     """Минимальный парсер ``.env`` без внешних зависимостей.
 
@@ -536,6 +576,30 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
         tui.print_error("Planner output missing required `task_id` field.")
         return 1
 
+    # Автокоррекция base_branch: если планировщик угадал ветку, которой
+    # нет в этом репо — заменим на реальную дефолтную (origin/HEAD → main →
+    # master → текущая). Это типичная история, когда LLM пишет "main", а
+    # репо на "master".
+    declared_base = plan_data.get("base_branch") or "main"
+    try:
+        subprocess.check_output(
+            ["git", "rev-parse", "--verify", "--quiet", str(declared_base)],
+            cwd=str(repo_root), stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        detected = _detect_default_branch(repo_root)
+        if detected != declared_base:
+            tui.print_dim(
+                f"  base_branch '{declared_base}' not found in repo, "
+                f"using detected default '{detected}'"
+            )
+            plan_data["base_branch"] = detected
+            # Перепишем pending_plan чтобы дальше всё работало.
+            pending_plan.write_text(
+                json.dumps(plan_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
     final_run_dir = paths.run_dir(repo_root, task_id)
     if final_run_dir.exists() and not args.force:
         tui.print_error(
@@ -606,7 +670,7 @@ async def _wipe_run_dir(repo_root: Path, task_id: str, run_dir: Path) -> None:
     # Дочерние ветки воркеров — пройдёмся по списку (имена нам ещё неизвестны
     # без plan.json, но git справится сам через шаблон). Используем worktree.git.
     try:
-        await worktree._git(  # type: ignore[attr-defined]
+        await worktree._git(
             "branch",
             "-D",
             *await _list_worker_branches(repo_root, task_id),
@@ -878,6 +942,16 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Параллельный мультиагентный рой orchX.",
     )
     p.add_argument("-v", "--verbose", action="store_true")
+    try:
+        from orchx import __version__ as _orchx_version
+    except ImportError:
+        _orchx_version = "unknown"
+    p.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"orchX {_orchx_version}",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     plan_p = sub.add_parser("plan", help="Сгенерировать plan.json через orchX-planner")
@@ -1233,6 +1307,19 @@ async def _cmd_watch(args: argparse.Namespace) -> int:
     tui.out("Reactions:")
     for k, v in reactions.items():
         tui.out(f"  {k}: auto={v.auto} action={v.action} max_retries={v.max_retries}")
+
+    # Watch — это долгий процесс; пользователю нужно видеть прогресс
+    # без `-v`. Включаем INFO-handler для ``orchx.pr_watcher`` в stderr.
+    _watcher_logger = logging.getLogger("orchx.pr_watcher")
+    if not any(
+        isinstance(h, logging.StreamHandler) and h.stream is sys.stderr
+        for h in _watcher_logger.handlers
+    ):
+        _ch = logging.StreamHandler(sys.stderr)
+        _ch.setLevel(logging.INFO)
+        _ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        _watcher_logger.addHandler(_ch)
+        _watcher_logger.setLevel(logging.INFO)
 
     # NB: callback'и debug/implementer/auto-merge requires polishing для real
     # orchestrator-respawn. P0.4 даёт инфраструктуру, follow-up tasks

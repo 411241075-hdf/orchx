@@ -71,18 +71,6 @@ Headless мультиагентный рой для git-проектов: дек
 | **Compaction**                | На ~75% context window — single-pass summary, чтобы не врезаться в стенку.                                                                                      |
 | **Resume падшего прогона**    | `orchx all --resume "..."` — уже завершённые задачи пропускаются.                                                                                               |
 
-### Новое в 0.2
-
-`orchx watch` ↑ feedback loop на PR (CI failures → debugger, change-requests → implementer, approved-and-green → notify/auto-merge) ·
-`runtime: docker` ↑ sandboxed воркеры в контейнерах ·
-`memory: sqlite` ↑ долгоживущая память + опциональные embeddings ·
-`mcp_servers:` в frontmatter ↑ воркеры подключаются к Model Context Protocol серверам ·
-`orchx dashboard` ↑ FastAPI + SSE + минимальный HTMX UI ·
-`find_symbol / rename_symbol` ↑ AST-based symbol tools ·
-`browser` ↑ Playwright tool с localhost-sandbox ·
-**cost tracking** + budget enforcement + Slack/Discord/Webhook notifiers ·
-полная история — [`docs/changelog.md`](docs/changelog.md).
-
 ## Quickstart
 
 ```bash

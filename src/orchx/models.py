@@ -665,7 +665,7 @@ def _parse_review_report(raw: Any) -> ReviewReport | None:
         line = int(line_val) if isinstance(line_val, int) and line_val >= 1 else None
         parsed.append(
             ReviewFinding(
-                severity=severity,  # type: ignore[arg-type]
+                severity=severity,
                 category=cat,
                 description=description,
                 file=str(f["file"]) if isinstance(f.get("file"), str) else None,

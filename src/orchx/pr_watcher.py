@@ -97,7 +97,7 @@ def parse_reactions_yaml(raw: dict[str, Any]) -> dict[ReactionEvent, ReactionCon
                 default=DEFAULT_REACTIONS[key].escalate_after_min,
             ),
         )
-        out[key] = rc  # type: ignore[index]
+        out[key] = rc
     return out
 
 

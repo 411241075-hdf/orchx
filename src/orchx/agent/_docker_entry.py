@@ -52,8 +52,8 @@ async def _amain() -> int:
     log_file = cwd / ".orchx" / "docker-worker.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    config = LLMConfig.from_env()
-    llm = LLMClient(config=config)
+    cfg = LLMConfig.from_env()
+    llm = LLMClient(cfg)
 
     outcome = await run_agent(
         role=args.role,

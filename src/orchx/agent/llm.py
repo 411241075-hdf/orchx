@@ -350,7 +350,7 @@ class LLMClient:
         input_tokens = 0
         output_tokens = 0
 
-        async with await self._client.chat.completions.create(**kwargs) as stream:  # type: ignore[arg-type]
+        async with await self._client.chat.completions.create(**kwargs) as stream:
             async for chunk in stream:
                 # Usage может прийти в финальном chunk'е (OpenAI/Anthropic).
                 usage = getattr(chunk, "usage", None)

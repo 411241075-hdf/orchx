@@ -592,9 +592,10 @@ def _build_debugger_context(state: TaskState) -> str:
             "следующий attempt снова заблокирует review."
         )
         for f in last.pre_merge_findings:
-            loc = ""
-            if f.get("file"):
-                loc = f.get("file")
+            loc: str = ""
+            file_val = f.get("file")
+            if file_val:
+                loc = str(file_val)
                 if f.get("line"):
                     loc = f"{loc}:{f.get('line')}"
             cat = f.get("category", "other")
@@ -1974,17 +1975,19 @@ async def _invoke_runtime(
     log_file: Path,
     effort: str | None,
     on_activity: Any = None,
+    repo_root: Path | None = None,
 ) -> runner.WorkerOutcome:
     """Спавнить worker через ctx.runtime (плагин), если есть; иначе fallback на runner.
 
     Все вызовы runner.run_worker во внутреннем коде orchestrator'а
     должны идти через этот хелпер (см. P0.2 / P1.2).
     """
+    _repo_root = repo_root if repo_root is not None else ctx.repo_root
     if ctx.runtime is not None and hasattr(ctx.runtime, "spawn_worker"):
         try:
             return await ctx.runtime.spawn_worker(
                 cwd=cwd,
-                repo_root=ctx.repo_root,
+                repo_root=_repo_root,
                 role=role,
                 prompt=prompt,
                 timeout_s=timeout_s,
@@ -1997,7 +2000,7 @@ async def _invoke_runtime(
             # Старый runtime без llm kw — fallback.
             return await ctx.runtime.spawn_worker(
                 cwd=cwd,
-                repo_root=ctx.repo_root,
+                repo_root=_repo_root,
                 role=role,
                 prompt=prompt,
                 timeout_s=timeout_s,
@@ -2008,7 +2011,7 @@ async def _invoke_runtime(
     return await runner.run_worker(
         llm=ctx.llm,
         cwd=cwd,
-        repo_root=ctx.repo_root,
+        repo_root=_repo_root,
         role=role,
         prompt=prompt,
         timeout_s=timeout_s,

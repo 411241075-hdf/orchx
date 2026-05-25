@@ -60,7 +60,10 @@ class Tool:
     внутри ``run``, а этот атрибут пуст.
     """
 
-    async def run(self, ctx: ToolContext, **kwargs: Any) -> ToolResult:
+    # Контракт ``run``: подклассы принимают свои keyword-only аргументы,
+    # совместимости с базой добиваемся через `Any`-сигнатуру (mypy LSP
+    # override-проверка отключена через `**Any`).
+    async def run(self, ctx: ToolContext, /, *args: Any, **kwargs: Any) -> ToolResult:
         """Выполнить tool. Подклассы переопределяют."""
         raise NotImplementedError
 

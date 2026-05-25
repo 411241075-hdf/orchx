@@ -77,6 +77,8 @@ def _resolve_and_check_host(host: str) -> tuple[bool, str]:
         if not sockaddr:
             continue
         ip_str = sockaddr[0]
+        if not isinstance(ip_str, str):
+            continue
         # IPv6 scoped — отрежем '%scope'.
         ip_str = ip_str.split("%", 1)[0]
         if ip_str in seen:
@@ -104,7 +106,7 @@ def _html_to_markdown(html_str: str) -> tuple[str, str | None]:
         ``error=None``.
     """
     try:
-        from markdownify import markdownify as _md  # type: ignore[import-not-found]
+        from markdownify import markdownify as _md
     except ImportError:
         return "", (
             "webfetch markdown conversion requires the `markdownify` "

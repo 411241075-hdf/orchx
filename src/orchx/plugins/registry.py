@@ -53,9 +53,16 @@ def _eps_for_slot(slot: str) -> list[EntryPoint]:
     try:
         return list(entry_points(group=f"orchx.{slot}"))
     except Exception:  # noqa: BLE001
-        # Старая API entry_points (<3.10): возвращает dict.
+        # Старая API entry_points (<3.10): возвращает dict-like SelectableGroups.
         eps = entry_points()
-        return list(eps.get(f"orchx.{slot}", []))  # type: ignore[union-attr]
+        # SelectableGroups поддерживает ``.select(group=...)``; dict — ``.get(...)``.
+        select = getattr(eps, "select", None)
+        if callable(select):
+            return list(select(group=f"orchx.{slot}"))
+        get = getattr(eps, "get", None)
+        if callable(get):
+            return list(get(f"orchx.{slot}", []))
+        return []
 
 
 def registered_plugins() -> dict[str, list[str]]:

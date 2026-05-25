@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from orchx.agent.llm import LLMClient
 from orchx.agent.worker import run_agent
 from orchx.tests.fixtures.mock_llm import FakeLLMClient, scripted
 
@@ -60,7 +62,7 @@ async def test_agent_writes_file_via_tool_call(workspace: Path):
         cwd=workspace,
         repo_root=workspace,
         user_prompt="Create new.txt with 'hello world'",
-        llm=llm,
+        llm=cast(LLMClient, llm),
         effort=None,
         timeout_s=30,
         log_file=workspace / ".orchx" / "agent.log",
@@ -93,7 +95,7 @@ async def test_agent_finishes_without_tool_calls(workspace: Path):
         cwd=workspace,
         repo_root=workspace,
         user_prompt="Verify the system",
-        llm=llm,
+        llm=cast(LLMClient, llm),
         effort=None,
         timeout_s=10,
         log_file=workspace / ".orchx" / "agent.log",
@@ -126,7 +128,7 @@ async def test_agent_handles_permission_denied_gracefully(workspace: Path):
         cwd=workspace,
         repo_root=workspace,
         user_prompt="Try to be evil",
-        llm=llm,
+        llm=cast(LLMClient, llm),
         effort=None,
         timeout_s=10,
         log_file=workspace / ".orchx" / "agent.log",

@@ -130,21 +130,24 @@ def _find_symbol_python(file: Path, name: str, cwd: Path) -> list[dict[str, Any]
 
     def visit(node: ast.AST, prefix: list[str]) -> None:
         for child in ast.iter_child_nodes(node):
-            kind = None
-            child_name = None
+            kind: str | None = None
+            child_name: str | None = None
+            child_line: int | None = None
             if isinstance(child, ast.ClassDef):
                 kind = "class"
                 child_name = child.name
+                child_line = child.lineno
             elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 kind = "function" if not prefix else "method"
                 child_name = child.name
+                child_line = child.lineno
             if kind and child_name:
                 full_path = [*prefix, child_name]
                 if full_path == target_parts or child_name == target_parts[-1]:
                     out.append(
                         {
                             "file": str(file.relative_to(cwd)),
-                            "line": child.lineno,
+                            "line": child_line,
                             "kind": kind,
                             "name": ".".join(full_path),
                         }

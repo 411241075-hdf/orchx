@@ -95,5 +95,6 @@ def test_acceptance_check_uses_fix() -> None:
     }
     check = _parse_acceptance(raw)
     assert check.type == "command"
+    assert check.command is not None
     assert "\n" in check.command
     assert (chr(92) + "n") not in check.command

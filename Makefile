@@ -9,7 +9,7 @@ RUFF := $(VENV)/bin/ruff
 MYPY := $(VENV)/bin/mypy
 
 .PHONY: help install install-all test test-unit test-integration test-cov \
-        lint fmt typecheck check clean build worker-image
+        lint fmt typecheck check clean build worker-image _fix-macos-hidden-pth
 
 help:
 	@echo "orchX dev tasks:"
@@ -32,9 +32,20 @@ $(VENV):
 
 install: $(VENV)
 	$(PIP) install --config-settings editable_mode=compat -e ".[dev,test]"
+	@$(MAKE) --no-print-directory _fix-macos-hidden-pth
 
 install-all: $(VENV)
 	$(PIP) install --config-settings editable_mode=compat -e ".[dev,test,server,mcp,docker,browser,memory-embed,pydantic]"
+	@$(MAKE) --no-print-directory _fix-macos-hidden-pth
+
+# macOS Sequoia + Python 3.14: pip-созданные .pth файлы получают
+# флаг UF_HIDDEN, и site.py их пропускает (см. site.py:185). Снимаем
+# флаг сразу после install — без этого `import orchx` падает.
+.PHONY: _fix-macos-hidden-pth
+_fix-macos-hidden-pth:
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		chflags nohidden $(VENV)/lib/python*/site-packages/*.pth 2>/dev/null || true; \
+	fi
 
 test: $(VENV)
 	$(PYTEST)

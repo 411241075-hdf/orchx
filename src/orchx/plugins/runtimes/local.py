@@ -54,7 +54,7 @@ class LocalRuntime:
             repo_root=repo_root,
             role=role,
             prompt=prompt,
-            timeout_s=timeout_s,
+            timeout_s=int(timeout_s),
             log_file=log_file,
             effort=effort,
             on_activity=on_activity,

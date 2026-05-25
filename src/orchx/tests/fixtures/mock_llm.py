@@ -175,7 +175,7 @@ class FakeLLMClient:
         if on_text_delta and resp.text:
             try:
                 maybe = on_text_delta(resp.text)
-                if hasattr(maybe, "__await__"):
+                if maybe is not None and hasattr(maybe, "__await__"):
                     await maybe
             except Exception:  # noqa: BLE001
                 pass

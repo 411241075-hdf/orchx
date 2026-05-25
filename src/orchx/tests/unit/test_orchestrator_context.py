@@ -43,7 +43,7 @@ def test_orchx_config_is_frozen():
 
     cfg = OrchXConfig()
     with pytest.raises(Exception):  # FrozenInstanceError
-        cfg.effort = "low"  # type: ignore[misc]
+        cfg.effort = "low"
 
 
 def test_logging_utils_import():
