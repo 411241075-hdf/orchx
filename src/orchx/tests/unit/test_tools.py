@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from orchx.agent.permissions import Permissions
 from orchx.agent.tools import (
     ToolContext,
@@ -218,10 +220,7 @@ async def test_bash_denied_without_exec(tmp_path: Path) -> None:
     assert not sentinel.exists()
 
 
-import pytest as _pytest
-
-
-@_pytest.mark.skip(
+@pytest.mark.skip(
     reason=(
         "Truncation marker test depends on raw byte counting of /dev/zero "
         "output — flaky across platforms where null bytes are handled "

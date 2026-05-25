@@ -151,5 +151,17 @@ def build_tool_registry(ctx: ToolContext) -> dict[str, Tool]:
         from .web import WebFetchTool
 
         registry["webfetch"] = WebFetchTool()
+    # P1.6: LSP-tools (symbol intelligence). Opt-in через ``lsp: allow``.
+    if p.lsp:
+        from .symbols import FindReferencesTool, FindSymbolTool, RenameSymbolTool
+
+        registry["find_symbol"] = FindSymbolTool()
+        registry["find_references"] = FindReferencesTool()
+        registry["rename_symbol"] = RenameSymbolTool()
+    # P1.7: Browser tool (Playwright). Требует extras orchx[browser].
+    if p.browser:
+        from .browser import BrowserTool
+
+        registry["browser"] = BrowserTool()
     registry["todowrite"] = TodoWriteTool()
     return registry

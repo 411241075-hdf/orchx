@@ -60,6 +60,9 @@ class AgentSpec:
 
     max_steps: int = 80
     permissions: Permissions = field(default_factory=Permissions)
+    mcp_servers: list[dict[str, object]] = field(default_factory=list)
+    """P1.1: список MCP-серверов для подключения. Каждый элемент:
+    ``{"name": ..., "command": ..., "args": [...], "env": {...}}``."""
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
@@ -126,6 +129,12 @@ def parse_agent_markdown(
     perms = (
         parse_permissions(perms_raw) if isinstance(perms_raw, dict) else Permissions()
     )
+    mcp_raw = fm.get("mcp_servers") or []
+    mcp_servers: list[dict[str, object]] = []
+    if isinstance(mcp_raw, list):
+        for entry in mcp_raw:
+            if isinstance(entry, dict) and entry.get("name"):
+                mcp_servers.append(dict(entry))
     return AgentSpec(
         name=name,
         role=role,
@@ -134,6 +143,7 @@ def parse_agent_markdown(
         source_path=source_path,
         max_steps=max_steps,
         permissions=perms,
+        mcp_servers=mcp_servers,
     )
 
 

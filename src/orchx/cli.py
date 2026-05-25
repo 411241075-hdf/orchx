@@ -259,6 +259,9 @@ def _orchX_config_from_args(args: argparse.Namespace) -> orchestrator.OrchXConfi
         auto_stash=getattr(args, "auto_stash", False),
         per_task_review=getattr(args, "per_task_review", False),
         per_task_review_effort=getattr(args, "per_task_review_effort", "medium"),
+        cleanup_worktrees_after_merge=getattr(args, "cleanup_worktrees", False),
+        max_cost_usd=getattr(args, "max_cost_usd", None),
+        auto_fixup_chain=not getattr(args, "no_auto_fixup", False),
     )
 
 
@@ -378,6 +381,35 @@ def _add_behavior_flags(p: argparse.ArgumentParser) -> None:
         choices=["minimal", "low", "medium", "high", "xhigh", "max"],
         default="medium",
         help="Effort для pre-merge reviewer'а (по умолчанию medium).",
+    )
+    # P2.1: cleanup worktrees after merge.
+    p.add_argument(
+        "--cleanup-worktrees",
+        action="store_true",
+        help=(
+            "P2.1: после успешного merge задачи в integration ветку удалять "
+            "её worktree. Экономит диск на больших прогонах; для debug удобнее "
+            "оставлять (default off)."
+        ),
+    )
+    # P1.3: cost budget.
+    p.add_argument(
+        "--max-cost-usd",
+        type=float,
+        default=None,
+        help=(
+            "P1.3: жёсткий budget в USD на весь прогон. Supervisor abort'ит "
+            "рой при превышении. По умолчанию unlimited."
+        ),
+    )
+    # P1.8: auto-fixup chain.
+    p.add_argument(
+        "--no-auto-fixup",
+        action="store_true",
+        help=(
+            "P1.8: НЕ конвертировать blocking review findings в follow-up "
+            "debugger-задачи (по умолчанию конвертирует)."
+        ),
     )
     p.add_argument(
         "--resume",
@@ -711,6 +743,11 @@ async def _cmd_run(args: argparse.Namespace) -> int:
         board.start()
         board_ref["board"] = board
 
+    # P0.2 / P1.5: загрузка плагинов из .orchx/config.yaml.
+    from .plugins import load_from_config
+
+    plugins_bag = load_from_config(repo_root / ".orchx" / "config.yaml")
+
     try:
         try:
             summary = await orchestrator.run_orchX(
@@ -720,6 +757,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
                 on_ctx_ready=_on_ctx,
                 on_init_progress=_on_init_progress,
                 resume=getattr(args, "resume", False),
+                plugins=plugins_bag,
             )
         except worktree.DirtyWorkingTreeError as e:
             # Грязный workdir — пользовательская ошибка, не баг кода. Показываем
@@ -907,6 +945,68 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    watch_p = sub.add_parser(
+        "watch",
+        help=(
+            "P0.4: PR feedback loop — polling CI status / review comments "
+            "и автоматическая реакция (debugger на CI failure, implementer "
+            "на change-request, notify/merge на approved+green)."
+        ),
+    )
+    watch_p.add_argument(
+        "task_id",
+        nargs="?",
+        default=None,
+        help="task_id run'а. Если не задан — берём самый свежий.",
+    )
+    watch_p.add_argument(
+        "--pr-url",
+        default=None,
+        help=(
+            "URL pull-request'а. Если не задан — пытаемся прочитать из "
+            "runs/<task_id>/pr.url (создаётся orchx при opening PR)."
+        ),
+    )
+    watch_p.add_argument(
+        "--poll-interval",
+        type=float,
+        default=60.0,
+        help="Период опроса GitHub в секундах (default: 60).",
+    )
+    watch_p.add_argument(
+        "--max-wall-hours",
+        type=float,
+        default=24.0,
+        help="Жёсткий timeout watcher'а в часах (default: 24).",
+    )
+    watch_p.add_argument(
+        "--auto-fix-ci",
+        action="store_true",
+        help="Шорткат: ставит reactions.ci_failed.auto=true.",
+    )
+    watch_p.add_argument(
+        "--auto-merge",
+        action="store_true",
+        help="Шорткат: ставит reactions.approved_and_green.action=auto-merge.",
+    )
+
+    plugins_p = sub.add_parser(
+        "plugins",
+        help="P0.2: управление plugin-системой (list / info).",
+    )
+    plugins_sub = plugins_p.add_subparsers(dest="plugins_cmd", required=True)
+    plugins_sub.add_parser("list", help="Список всех зарегистрированных plugin'ов.")
+
+    dash_p = sub.add_parser(
+        "dashboard",
+        help=(
+            "P1.4: запустить web-dashboard (REST + SSE) на указанном порту. "
+            "Требует pip install 'orchx[server]'."
+        ),
+    )
+    dash_p.add_argument("--host", default="127.0.0.1")
+    dash_p.add_argument("--port", type=int, default=8421)
+
     logs_p = sub.add_parser(
         "logs",
         help="Просмотр логов run'а",
@@ -1077,6 +1177,125 @@ def _print_tail(path: Path, n: int) -> None:
         tui.out(ln)
 
 
+async def _cmd_watch(args: argparse.Namespace) -> int:
+    """P0.4: PR feedback loop.
+
+    Опрашивает GitHub PR (через ``GithubSCM`` plugin) и реагирует на:
+    CI failures (→ debugger), change-requests (→ implementer),
+    approved+green (→ notify/auto-merge).
+    """
+    repo_root = _detect_repo_root()
+    task_id = getattr(args, "task_id", None) or _latest_task_id(repo_root)
+    if not task_id:
+        tui.print_error("no runs found in orchx/runs/")
+        return 2
+
+    pr_url = getattr(args, "pr_url", None)
+    if not pr_url:
+        pr_file = paths.run_dir(repo_root, task_id) / "pr.url"
+        if pr_file.exists():
+            pr_url = pr_file.read_text(encoding="utf-8").strip()
+    if not pr_url:
+        tui.print_error(
+            f"no PR url for task {task_id}. Use --pr-url or "
+            f"create runs/{task_id}/pr.url with the PR url."
+        )
+        return 2
+
+    from .plugins import load_from_config, load_plugin
+    from .pr_watcher import DEFAULT_REACTIONS, parse_reactions_yaml, watch_pr
+
+    config_path = repo_root / ".orchx" / "config.yaml"
+    plugin_bag = load_from_config(config_path)
+    scm = plugin_bag.get("scm") or load_plugin("scm", "github")
+    notifiers = plugin_bag.get("notifiers") or []
+    notifier = notifiers[0] if notifiers else None
+
+    # Reactions из config + CLI shortcuts.
+    reactions = dict(DEFAULT_REACTIONS)
+    if config_path.exists():
+        import yaml
+
+        try:
+            raw_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            reactions = parse_reactions_yaml(raw_cfg.get("reactions", {}))
+        except yaml.YAMLError:
+            pass
+    if getattr(args, "auto_fix_ci", False):
+        reactions["ci_failed"].auto = True
+        reactions["ci_failed"].action = "send-to-debugger"
+    if getattr(args, "auto_merge", False):
+        reactions["approved_and_green"].action = "auto-merge"
+
+    tui.banner(f"orchX watch {task_id}")
+    tui.out(f"PR: {pr_url}")
+    tui.out(f"Poll: {args.poll_interval}s   Max wall: {args.max_wall_hours}h")
+    tui.out("Reactions:")
+    for k, v in reactions.items():
+        tui.out(f"  {k}: auto={v.auto} action={v.action} max_retries={v.max_retries}")
+
+    # NB: callback'и debug/implementer/auto-merge requires polishing для real
+    # orchestrator-respawn. P0.4 даёт инфраструктуру, follow-up tasks
+    # (P1.8 auto-fixup chain) подключат их через orchestrator runtime.
+    await watch_pr(
+        repo_root=repo_root,
+        pr_url=pr_url,
+        task_id=task_id,
+        reactions=reactions,
+        scm=scm,
+        notifier=notifier,
+        on_ci_failed=None,
+        on_changes_requested=None,
+        on_approved_and_green=None,
+        poll_interval_s=float(args.poll_interval),
+        max_wall_s=float(args.max_wall_hours) * 3600,
+    )
+    return 0
+
+
+async def _cmd_dashboard(args: argparse.Namespace) -> int:
+    """P1.4: запустить web-dashboard (FastAPI + SSE) на указанном порту."""
+    try:
+        from .web.server import serve as _serve
+    except ImportError as e:
+        tui.print_error(f"orchx[server] not installed: {e}")
+        return 2
+    repo_root = _detect_repo_root()
+    tui.banner(f"orchX dashboard @ http://{args.host}:{args.port}")
+    tui.out("Open the URL above in your browser.")
+    tui.out("Live SSE events stream at /api/events.")
+    await _serve(repo_root=repo_root, host=args.host, port=args.port)
+    return 0
+
+
+async def _cmd_plugins(args: argparse.Namespace) -> int:
+    """P0.2: список зарегистрированных plugin'ов по slot'ам."""
+    from .plugins import registered_plugins
+
+    plugins = registered_plugins()
+    tui.banner("orchX plugins")
+    for slot, names in plugins.items():
+        tui.out(f"  {slot}:")
+        for n in names:
+            tui.out(f"    - {n}")
+    if not any(plugins.values()):
+        tui.out("  (no plugins registered)")
+    _ = args
+    return 0
+
+
+def _latest_task_id(repo_root: Path) -> str | None:
+    """Утилита: вернуть task_id самого свежего run'а в orchx/runs/."""
+    runs_dir = paths.runs_dir(repo_root)
+    if not runs_dir.exists():
+        return None
+    candidates = [d for d in runs_dir.iterdir() if d.is_dir()]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda d: d.stat().st_mtime)
+    return latest.name
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entrypoint console-команды ``orchx`` (или ``python -m orchx``)."""
     parser = _build_parser()
@@ -1093,6 +1312,9 @@ def main(argv: list[str] | None = None) -> int:
         "init": _cmd_init,
         "list": _cmd_list,
         "logs": _cmd_logs,
+        "watch": _cmd_watch,
+        "plugins": _cmd_plugins,
+        "dashboard": _cmd_dashboard,
     }[args.cmd]
     try:
         return asyncio.run(handler(args))

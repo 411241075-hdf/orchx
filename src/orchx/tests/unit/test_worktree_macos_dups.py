@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Тесты для cleanup_macos_duplicates / cleanup_git_internal_duplicates.
 
 В прошлом прогоне (orchx/runs/admin-subdomain bba6422) macOS APFS под

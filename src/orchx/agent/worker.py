@@ -59,6 +59,9 @@ class WorkerOutcome:
     """Количество LLM-вызовов в этом воркере (для cost-analysis)."""
     compactions: int = 0
     """Сколько раз история была сжата компактором."""
+    cost_usd: float = 0.0
+    """P1.3: суммарная стоимость LLM-вызовов воркера в USD (0.0 если
+    цена модели неизвестна или cost-tracker выключен)."""
 
 
 # Сколько символов tool-результата кладём в лог (не в LLM-сообщение).
@@ -343,7 +346,73 @@ async def run_agent_with_spec(
         todos=[],
     )
     tools = build_tool_registry(ctx)
-    tool_schemas = [to_openai_schema(t) for t in tools.values()]
+
+    # P1.1: MCP-bridge. Если в роли объявлены mcp_servers — поднимаем
+    # их и подмешиваем tools в реестр (с префиксом <server>__).
+    from contextlib import AsyncExitStack
+
+    mcp_stack = AsyncExitStack()
+    try:
+        if spec.mcp_servers:
+            try:
+                from .tools.mcp import build_mcp_tools
+
+                mcp_tools = await build_mcp_tools(
+                    [dict(s) for s in spec.mcp_servers], stack=mcp_stack
+                )
+                for mt in mcp_tools:
+                    tools[mt.name] = mt
+            except Exception as e:  # noqa: BLE001
+                # MCP не должен ломать воркера — просто логируем.
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "MCP bootstrap failed for role %s: %s", role, e
+                )
+        tool_schemas = [to_openai_schema(t) for t in tools.values()]
+        return await _run_agent_loop_inner(
+            spec=spec,
+            cwd=cwd,
+            repo_root=repo_root,
+            user_prompt=user_prompt,
+            llm=llm,
+            effort=effort,
+            timeout_s=timeout_s,
+            log_file=log_file,
+            on_activity=on_activity,
+            role_for_llm=role_for_llm,
+            ctx=ctx,
+            tools=tools,
+            tool_schemas=tool_schemas,
+            role=role,
+            started=started,
+            deadline=deadline,
+            _activity=_activity,
+        )
+    finally:
+        await mcp_stack.aclose()
+
+
+async def _run_agent_loop_inner(
+    *,
+    spec: _fm.AgentSpec,
+    cwd: Path,
+    repo_root: Path,
+    user_prompt: str,
+    llm: LLMClient,
+    effort: str | None,
+    timeout_s: int,
+    log_file: Path,
+    on_activity: Callable[[str], Any] | None,
+    role_for_llm: str | None,
+    ctx: ToolContext,
+    tools: dict,
+    tool_schemas: list,
+    role: str,
+    started: float,
+    deadline: float,
+    _activity: Callable[[str], None],
+) -> WorkerOutcome:
 
     # LLM-клиент для конкретной роли (с per-role моделью).
     role_llm = llm.for_role(role, effort=effort)
@@ -380,6 +449,7 @@ async def run_agent_with_spec(
     compactions_done = 0
     total_input_tokens = 0
     total_output_tokens = 0
+    total_cost_usd = 0.0  # P1.3
     llm_calls = 0
 
     # Стрим-колбэки определены один раз — оба замыкания захватывают
@@ -439,6 +509,17 @@ async def run_agent_with_spec(
             llm_calls += 1
             total_input_tokens += resp.input_tokens or 0
             total_output_tokens += resp.output_tokens or 0
+            # P1.3: cost estimation per call (zero if model unknown).
+            try:
+                from ..cost import estimate_cost_usd as _estimate_cost
+
+                total_cost_usd += _estimate_cost(
+                    model=role_llm.model,
+                    input_tokens=resp.input_tokens or 0,
+                    output_tokens=resp.output_tokens or 0,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
             if resp.text:
                 full_text.append(resp.text)
@@ -525,4 +606,5 @@ async def run_agent_with_spec(
         output_tokens=total_output_tokens,
         llm_calls=llm_calls,
         compactions=compactions_done,
+        cost_usd=total_cost_usd,
     )

@@ -1,5 +1,22 @@
 """Главный оркестратор роя: phased обход, параллельный спавн, retry, merge, replan.
 
+.. note::
+
+   P0.1 (см. ``docs/recommendations.md``): этот модуль постепенно
+   расщепляется. Уже вынесены:
+
+   * :mod:`orchx.orchestrator.context` — state dataclasses.
+   * :mod:`orchx.orchestrator.logging_utils` — append-only журнал.
+   * :mod:`orchx.orchestrator.git_utils` — git-обёртки.
+   * :mod:`orchx.orchestrator.supervisor` — supervisor loop + budget helpers.
+
+   Следующие safe extractions (требуют E2E-тестов на reviewer-pipeline):
+
+   * ``review.py`` — финальный reviewer + 3-state verifier.
+   * ``merge.py`` — merge в integration + merger spawn.
+   * ``retry.py`` — retry-логика + debugger spawn + pre-merge review.
+   * ``phases.py`` — phase-loop, level execution.
+
 Поддерживает полный продакшн-цикл для задач любого размера:
 
 * Иерархические планы: ``phases`` → mini-DAG задач внутри фазы. Фазы выполняются
@@ -28,15 +45,13 @@ import re
 import textwrap
 import time
 from contextlib import suppress
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import acceptance, paths, replanner, runner, worktree
-from .agent.llm import LLMClient, LLMConfig
-from .runtime import WORKER_RUNTIME_DIR_NAME
-from .dag import phase_levels
-from .models import (
+from .. import acceptance, paths, replanner, runner, worktree
+from ..agent.llm import LLMClient, LLMConfig
+from ..dag import phase_levels
+from ..models import (
     AcceptanceCheck,
     PhaseSpec,
     Plan,
@@ -47,192 +62,37 @@ from .models import (
     load_plan,
     load_result,
 )
+from ..runtime import WORKER_RUNTIME_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Config (CLI-managed knobs)
+# Config / State (P0.1: вынесено в :mod:`orchx.orchestrator.context`)
 # ---------------------------------------------------------------------------
 
+from .context import (  # noqa: E402
+    AttemptInfo,
+    OrchXConfig,
+    OrchXContext,
+    PhaseState,
+    TaskState,
+)
 
-@dataclass(frozen=True)
-class OrchXConfig:
-    """Поведенческие настройки прогона. Управляются CLI-флагами и env."""
-
-    auto_review: bool = True
-    """Запустить ``orchX-reviewer`` после успешного прохода всех уровней."""
-    auto_followup: bool = False
-    """Динамически добавлять задачи из ``needs_followup`` в DAG."""
-    max_followup_depth: int = 1
-    """Максимальная глубина каскада followup'ов (анти-loop)."""
-    use_debugger_on_retry: bool = True
-    """На повторных попытках использовать ``orchX-debugger`` вместо оригинального агента."""
-    use_merger_on_conflict: bool = True
-    """При merge-конфликте спавнить ``orchX-merger`` для разрешения."""
-    supervisor_enabled: bool = True
-    """Запускать фоновый watchdog с heartbeat-логом и enforcement бюджета."""
-    supervisor_interval_s: float = 30.0
-    """Период heartbeat'а supervisor'а в секундах."""
-    effort: str = "high"
-    """Reasoning effort для воркеров (мапится в provider-specific параметр LLM).
-
-    Best-practice для качества: ``high`` или ``xhigh`` (для самых сложных задач).
-    ``low``/``medium`` — для скорости/стоимости в ущерб качеству.
-    Per-task override доступен через ``TaskSpec.model``-аналогичное поле,
-    но мы не выводим его в plan.json — единый effort на весь прогон.
-    """
-    reviewer_effort: str = "xhigh"
-    """Усиленный effort для финального reviewer'а — recall важнее скорости."""
-    debugger_effort: str = "xhigh"
-    """Усиленный effort для debugger'а — диагностика требует глубокого рассуждения."""
-    merger_effort: str = "high"
-    """Effort для merger'а — обычно достаточно high."""
-    auto_replan: bool = True
-    """Авто-вызов orchX-planner при провале фазы (если фаза ``allow_replan: true``
-    и глобальный ``max_replans`` ещё не исчерпан). При False — оркестратор
-    останавливается на провале и открывает PR с маркером ``[failed]``."""
-    replanner_effort: str = "xhigh"
-    """Effort для orchX-planner при перепланировании — переразбивка задачи требует глубины."""
-    per_task_review: bool = False
-    """Если True, после прохождения acceptance каждой задачи и перед
-    git merge запускать lightweight reviewer (Angle A: line-by-line) на
-    дифф этой задачи vs. integration-ветки. Любые blocking findings
-    отправляют задачу на retry через debugger со списком findings'ов
-    в качестве failure_context. Цель — поймать корректность-bugs до
-    merge'а, когда дифф ещё мал и проще указать на причину."""
-    per_task_review_effort: str = "medium"
-    """Effort lightweight pre-merge reviewer'а — обычно достаточно ``medium``."""
-    allow_dirty: bool = False
-    """UNSAFE: пропустить проверку ``ensure_clean`` и стартовать рой даже на
-    грязном workdir. Воркеры будут работать против committed-версии файлов;
-    последующий merge может конфликтовать. Только для отладки."""
-    auto_stash: bool = False
-    """Если True, диспетчер сам сделает ``git stash push -m "pre-orchX <task_id>"``
-    перед стартом и ``git stash pop`` после завершения роя. Удобно, когда у тебя
-    есть локальные правки, которые жалко терять, но коммитить их рано."""
-
+# P0.1: вынесено в :mod:`orchx.orchestrator.git_utils`
+from .git_utils import (  # noqa: E402,F401
+    CONFLICT_MARKER_PREFIXES,
+    _files_with_conflict_markers,
+    _git_add_files,
+    _git_diff_stat,
+    _git_diff_summary,
+    _git_unmerged_files,
+)
 
 # ---------------------------------------------------------------------------
-# State
+# Logging (P0.1: вынесено в :mod:`orchx.orchestrator.logging_utils`)
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class AttemptInfo:
-    """Что произошло в одной попытке выполнения задачи."""
-
-    attempt_num: int
-    agent_used: (
-        str  # короткое имя роли (implementer, debugger) или полное имя из старых логов
-    )
-    outcome: runner.WorkerOutcome | None = None
-    acceptance_outcomes: list[acceptance.CheckOutcome] = field(default_factory=list)
-    failure_reason: str = ""
-    """Краткое объяснение, почему попытка не удалась (пусто = успешна)."""
-    pre_merge_findings: list[dict[str, Any]] = field(default_factory=list)
-    """Findings, которые pre-merge reviewer вернул для этой попытки.
-    Каждый элемент — {file, line, severity, category, description, ...}.
-    Используется debugger'ом на retry'е."""
-
-
-@dataclass
-class TaskState:
-    """Состояние одной задачи в процессе исполнения роя."""
-
-    spec: TaskSpec
-    branch: str
-    worktree_path: Path
-    attempts: list[AttemptInfo] = field(default_factory=list)
-    status: str = "pending"  # pending | running | success | failed | skipped
-    result_path: Path | None = None
-    """Путь к итоговому result.json (живёт внутри worktree задачи)."""
-    last_result: TaskResult | None = None
-    merge_sha: str | None = None
-    notes: str = ""
-    is_dynamic: bool = False
-    """Задача добавлена через needs_followup, не была в исходном plan.json."""
-    parent_task_id: str | None = None
-    """Если задача порождена другой через followup — id родителя."""
-    current_activity: str = ""
-    """Последняя «полезная» строка из stdout/stderr воркера. Live-доска
-    показывает её рядом с задачей, чтобы пользователь видел, что воркер
-    действительно работает (Read/Glob/Grep/Write…)."""
-
-    @property
-    def attempt_count(self) -> int:
-        """Сколько попыток уже было сделано."""
-        return len(self.attempts)
-
-
-@dataclass
-class PhaseState:
-    """Статус одной фазы в процессе исполнения."""
-
-    spec: PhaseSpec
-    status: str = "pending"  # pending | running | success | failed | skipped
-    notes: str = ""
-    started_at: float | None = None
-    finished_at: float | None = None
-    task_ids: list[str] = field(default_factory=list)
-    """ID задач этой фазы в текущей версии плана (могут меняться после replan)."""
-
-
-@dataclass
-class OrchXContext:
-    """Глобальный контекст одного запуска роя."""
-
-    repo_root: Path
-    plan: Plan
-    config: OrchXConfig
-    run_dir: Path  # orchx/runs/<task_id>/
-    worktrees_root: Path  # orchx/runs/<task_id>/worktrees/
-    integration_branch: str
-    integration_worktree: Path
-    log_file: Path
-    llm: LLMClient
-    """Базовый LLM-клиент. Воркеры получают per-role клонов через ``llm.for_role()``."""
-    task_template: str
-    plan_path: Path | None = None
-    """Путь к plan.json — нужен replanner'у для перезаписи."""
-    states: dict[str, TaskState] = field(default_factory=dict)
-    phase_states: dict[str, PhaseState] = field(default_factory=dict)
-    """Состояние каждой фазы по id. Обновляется после каждого replan."""
-    completed_phase_ids: list[str] = field(default_factory=list)
-    """История завершённых фаз (для replan-контекста и summary)."""
-    replan_count: int = 0
-    """Сколько раз уже звали planner с момента старта роя."""
-    replan_history: list[dict[str, Any]] = field(default_factory=list)
-    """История replan'ов для summary: каждый элемент — что упало и что предложил planner."""
-    total_retries: int = 0
-    started_at: float = 0.0
-    review_state: TaskState | None = None
-    """Состояние reviewer-задачи, если включён auto_review."""
-    aborted: bool = False
-    """True если supervisor решил остановить рой по бюджету."""
-    abort_reason: str = ""
-    halt_reason: str = ""
-    """Причина остановки роя из-за провалившейся фазы (replan недоступен).
-    В отличие от ``abort_reason`` (=супервизорский abort), сюда попадает
-    штатное завершение по факту провала фазы с allow_replan=false или
-    исчерпанным max_replans."""
-    auto_stashed: bool = False
-    """True, если диспетчер сделал ``git stash push`` на старте (через
-    ``--auto-stash``). В финале нужно сделать ``git stash pop``."""
-
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
-
-def _orchX_log(ctx: OrchXContext, msg: str) -> None:
-    """Append-only журнал роя."""
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n"
-    with ctx.log_file.open("a", encoding="utf-8") as f:
-        f.write(line)
-    logger.info(msg)
-
+from .logging_utils import _orchX_log  # noqa: E402,F401
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -811,8 +671,8 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
         if activity:
             state.current_activity = activity
 
-    outcome = await runner.run_worker(
-        llm=ctx.llm,
+    outcome = await _invoke_runtime(
+        ctx,
         cwd=state.worktree_path,
         repo_root=ctx.repo_root,
         role=agent_to_use,
@@ -824,6 +684,9 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
     )
     info.outcome = outcome
     state.current_activity = ""
+
+    # P1.3: накапливаем cost в ctx (per-task / per-role / total).
+    _accumulate_cost(ctx, state.spec.id, state.spec.agent, outcome)
 
     if outcome.timed_out:
         info.failure_reason = f"timeout after {state.spec.timeout_seconds}s"
@@ -914,6 +777,22 @@ async def _commit_and_merge(ctx: OrchXContext, state: TaskState) -> bool:
     )
     if success:
         _orchX_log(ctx, f"task {state.spec.id} merged into {ctx.integration_branch}")
+        # P2.1: освободить worktree если включено в config.
+        if ctx.config.cleanup_worktrees_after_merge and state.worktree_path:
+            try:
+                await worktree.remove_worktree(
+                    ctx.repo_root, state.worktree_path
+                )
+                _orchX_log(
+                    ctx,
+                    f"task {state.spec.id} worktree cleaned: {state.worktree_path}",
+                )
+                # NB: state.worktree_path не None'им, чтобы summary мог его показать.
+            except Exception as e:  # noqa: BLE001
+                _orchX_log(
+                    ctx,
+                    f"task {state.spec.id} worktree cleanup failed (non-fatal): {e}",
+                )
         return True
 
     _orchX_log(
@@ -995,8 +874,8 @@ async def _resolve_merge_conflict(
         / "logs"
         / f"{state.spec.id}.merger.attempt{state.attempt_count}.log"
     )
-    outcome = await runner.run_worker(
-        llm=ctx.llm,
+    outcome = await _invoke_runtime(
+        ctx,
         cwd=ctx.integration_worktree,
         repo_root=ctx.repo_root,
         role="merger",
@@ -1074,64 +953,6 @@ async def _resolve_merge_conflict(
         )
         return False
     return True
-
-
-async def _git_unmerged_files(cwd: Path) -> list[str]:
-    """Список файлов с merge-конфликтами в worktree."""
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "diff",
-        "--name-only",
-        "--diff-filter=U",
-        cwd=str(cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout_b, _ = await proc.communicate()
-    return [
-        line.strip()
-        for line in stdout_b.decode("utf-8", errors="replace").splitlines()
-        if line.strip()
-    ]
-
-
-CONFLICT_MARKER_PREFIXES = ("<<<<<<<", "=======", ">>>>>>>")
-
-
-async def _files_with_conflict_markers(cwd: Path, files: list[str]) -> list[str]:
-    """Файлы из ``files``, в которых ещё остались git conflict markers."""
-    bad: list[str] = []
-    for f in files:
-        path = cwd / f
-        if not path.is_file():
-            # Удалённый файл — нет маркеров.
-            continue
-        try:
-            content = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            bad.append(f)
-            continue
-        for line in content.splitlines():
-            if any(line.startswith(p) for p in CONFLICT_MARKER_PREFIXES):
-                bad.append(f)
-                break
-    return bad
-
-
-async def _git_add_files(cwd: Path, files: list[str]) -> None:
-    """`git add` указанных файлов (или удаление, если файл стёрт)."""
-    if not files:
-        return
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "add",
-        "--",
-        *files,
-        cwd=str(cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    await proc.communicate()
 
 
 def _render_merger_task_md(
@@ -1427,8 +1248,8 @@ async def _run_pre_merge_review(
         / "logs"
         / f"{state.spec.id}.premerge-review.attempt{state.attempt_count}.log"
     )
-    outcome = await runner.run_worker(
-        llm=ctx.llm,
+    outcome = await _invoke_runtime(
+        ctx,
         cwd=state.worktree_path,
         repo_root=ctx.repo_root,
         role="reviewer",
@@ -1723,8 +1544,8 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
     log_file = ctx.run_dir / "logs" / f"{review_spec.id}.log"
     info = AttemptInfo(attempt_num=1, agent_used="orchX-reviewer")
     review_state.attempts.append(info)
-    outcome = await runner.run_worker(
-        llm=ctx.llm,
+    outcome = await _invoke_runtime(
+        ctx,
         cwd=review_wt,
         repo_root=ctx.repo_root,
         role="reviewer",
@@ -1734,6 +1555,8 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
         effort=ctx.config.reviewer_effort,
     )
     info.outcome = outcome
+    # P1.3: cost для reviewer'а.
+    _accumulate_cost(ctx, review_spec.id, "reviewer", outcome)
 
     if outcome.timed_out or outcome.returncode != 0:
         review_state.status = "failed"
@@ -2064,105 +1887,287 @@ def _render_reviewer_task_md(
 """
 
 
-async def _git_diff_summary(cwd: Path, base: str) -> str:
-    """Краткий вывод `git diff --shortstat base...HEAD`."""
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "diff",
-        "--shortstat",
-        f"{base}...HEAD",
-        cwd=str(cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout_b, _ = await proc.communicate()
-    return stdout_b.decode("utf-8", errors="replace").strip()
-
-
-async def _git_diff_stat(cwd: Path, base: str) -> str:
-    """Полный `git diff --stat base...HEAD`."""
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "diff",
-        "--stat",
-        f"{base}...HEAD",
-        cwd=str(cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout_b, _ = await proc.communicate()
-    return stdout_b.decode("utf-8", errors="replace").strip()
-
-
 # ---------------------------------------------------------------------------
 # Supervisor
 # ---------------------------------------------------------------------------
 
 
-async def _supervisor_loop(ctx: OrchXContext) -> None:
-    """Фоновая корутина: heartbeat, прогресс-репорт, enforcement бюджета."""
-    interval = max(1.0, ctx.config.supervisor_interval_s)
-    while True:
-        await asyncio.sleep(interval)
-        if ctx.aborted:
-            return
-        elapsed = time.monotonic() - ctx.started_at
-        budget = ctx.plan.global_budget.max_wall_seconds
-        counts = {"success": 0, "failed": 0, "running": 0, "pending": 0, "skipped": 0}
-        for s in ctx.states.values():
-            counts[s.status] = counts.get(s.status, 0) + 1
-        _orchX_log(
-            ctx,
-            f"[supervisor] elapsed={elapsed:.0f}s/{budget}s "
-            f"counts={counts} retries={ctx.total_retries}/{ctx.plan.global_budget.max_total_retries}",
-        )
-        if elapsed > budget:
-            _orchX_log(
-                ctx,
-                f"[supervisor] WALL TIMEOUT exceeded ({elapsed:.0f}s > {budget}s); "
-                "aborting remaining tasks",
-            )
-            ctx.aborted = True
-            ctx.abort_reason = f"wall timeout {elapsed:.0f}s > {budget}s"
-            return
-
-
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
+from .supervisor import (  # noqa: E402,F401
+    _all_failures_are_env,
+    _budget_exceeded,
+    _supervisor_loop,  # noqa: E402,F401
+)
 
 
-def _budget_exceeded(ctx: OrchXContext) -> bool:
-    """Превышен ли глобальный wall-clock budget?"""
-    return time.monotonic() - ctx.started_at > ctx.plan.global_budget.max_wall_seconds
+async def _record_run_to_memory(ctx: OrchXContext, summary: dict[str, Any]) -> None:
+    """P0.3 / P2.4: после прогона сохранить план + результат в memory plugin.
 
+    Сохраняем 3 факта:
 
-def _all_failures_are_env(failed_tasks: list[TaskState]) -> bool:
-    """Все провалившиеся задачи упали по категории ``env``?
-
-    Используется replanner-логикой: если да — replan бесполезен, нужно
-    остановиться и попросить пользователя починить окружение.
-
-    Считаем categories из последнего attempt'а каждой failed-задачи.
-    Если у задачи нет acceptance_outcomes (упал агент / timeout), считаем
-    это НЕ env-failure (то есть replan имеет смысл).
+    * ``plans/<task_id>`` — task_id + summary + repo_root для будущих похожих planner-вызовов.
+    * ``failures/<task_id>`` — если есть failed-задачи (для debugger context recall).
+    * ``reviews/<task_id>`` — если был reviewer.
     """
-    if not failed_tasks:
-        return False
-    for state in failed_tasks:
-        if not state.attempts:
-            return False
-        last = state.attempts[-1]
-        if not last.acceptance_outcomes:
-            return False
-        failed_outcomes = [o for o in last.acceptance_outcomes if not o.passed]
-        if not failed_outcomes:
-            # Все checks прошли, но статус failed — что-то странное
-            # (например, merge conflict). Лучше попробовать replan.
-            return False
-        if not all(o.category == "env" for o in failed_outcomes):
-            return False
-    return True
+    if ctx.memory is None:
+        return
+    try:
+        repo_root_str = str(ctx.repo_root)
+        plan_payload = {
+            "task_id": ctx.plan.task_id,
+            "summary": ctx.plan.summary,
+            "base_branch": ctx.plan.base_branch,
+            "phases": [{"id": p.id, "goal": p.goal} for p in ctx.plan.phases],
+            "counts": summary.get("counts", {}),
+            "wall_seconds": summary.get("wall_seconds"),
+            "aborted": summary.get("aborted", False),
+            "__repo_root__": repo_root_str,
+        }
+        await ctx.memory.remember("plans", ctx.plan.task_id, plan_payload)
+
+        failed = [
+            t for t in summary.get("tasks", []) if t.get("status") == "failed"
+        ]
+        if failed:
+            fail_payload = {
+                "task_id": ctx.plan.task_id,
+                "failed_tasks": failed,
+                "halt_reason": summary.get("halt_reason"),
+                "__repo_root__": repo_root_str,
+            }
+            await ctx.memory.remember(
+                "failures", ctx.plan.task_id, fail_payload
+            )
+        if ctx.review_state and ctx.review_state.last_result:
+            review = ctx.review_state.last_result.review_report
+            if review:
+                review_payload = {
+                    "task_id": ctx.plan.task_id,
+                    "summary": review.summary,
+                    "findings": [
+                        {
+                            "severity": f.severity,
+                            "category": f.category,
+                            "description": f.description[:200],
+                            "verifier_verdict": f.verifier_verdict,
+                        }
+                        for f in review.findings
+                    ],
+                    "__repo_root__": repo_root_str,
+                }
+                await ctx.memory.remember(
+                    "reviews", ctx.plan.task_id, review_payload
+                )
+    except Exception:  # noqa: BLE001
+        logger.warning("memory.remember failed at run end", exc_info=True)
+
+
+async def _invoke_runtime(
+    ctx: OrchXContext,
+    *,
+    cwd: Path,
+    role: str,
+    prompt: str,
+    timeout_s: int,
+    log_file: Path,
+    effort: str | None,
+    on_activity: Any = None,
+) -> runner.WorkerOutcome:
+    """Спавнить worker через ctx.runtime (плагин), если есть; иначе fallback на runner.
+
+    Все вызовы runner.run_worker во внутреннем коде orchestrator'а
+    должны идти через этот хелпер (см. P0.2 / P1.2).
+    """
+    if ctx.runtime is not None and hasattr(ctx.runtime, "spawn_worker"):
+        try:
+            return await ctx.runtime.spawn_worker(
+                cwd=cwd,
+                repo_root=ctx.repo_root,
+                role=role,
+                prompt=prompt,
+                timeout_s=timeout_s,
+                log_file=log_file,
+                effort=effort,
+                on_activity=on_activity,
+                llm=ctx.llm,
+            )
+        except TypeError:
+            # Старый runtime без llm kw — fallback.
+            return await ctx.runtime.spawn_worker(
+                cwd=cwd,
+                repo_root=ctx.repo_root,
+                role=role,
+                prompt=prompt,
+                timeout_s=timeout_s,
+                log_file=log_file,
+                effort=effort,
+                on_activity=on_activity,
+            )
+    return await runner.run_worker(
+        llm=ctx.llm,
+        cwd=cwd,
+        repo_root=ctx.repo_root,
+        role=role,
+        prompt=prompt,
+        timeout_s=timeout_s,
+        log_file=log_file,
+        effort=effort,
+        on_activity=on_activity,
+    )
+
+
+async def _maybe_spawn_followup_fixups(ctx: OrchXContext) -> int:
+    """P1.8: для каждого blocking finding в reviewer.review_report создать
+    TaskSpec для debugger'а и сохранить в ``ctx.run_dir/auto_fixup_plan.json``.
+
+    Возвращает количество сгенерированных задач. NB: текущая версия
+    **только сохраняет** план fixup'ов в файл и отсылает notification
+    (наблюдатель может реагировать), но не блокирует основной цикл и
+    не вызывает _run_one_phase повторно — это требует более глубокой
+    интеграции с DAG (планируется на P2.x).
+    """
+    if ctx.review_state is None or ctx.review_state.last_result is None:
+        return 0
+    report = ctx.review_state.last_result.review_report
+    if not report or report.blocking_count == 0:
+        return 0
+
+    fixup_specs: list[dict[str, Any]] = []
+    for i, f in enumerate(report.findings):
+        if f.severity != "blocking":
+            continue
+        fixup_specs.append(
+            {
+                "id": f"orchX-autofix-{i + 1}",
+                "agent": "debugger",
+                "depends_on": [],
+                "goal": (
+                    f"Fix blocking review finding ({f.category}): {f.description}"
+                ),
+                "file_scope": [f.file] if f.file else [],
+                "acceptance": [
+                    {
+                        "type": "command",
+                        "description": "Build / tests pass after fix",
+                        "command": f.failure_scenario or "true",
+                    }
+                ],
+                "context": {
+                    "review_finding": {
+                        "severity": f.severity,
+                        "category": f.category,
+                        "description": f.description,
+                        "file": f.file,
+                        "line": f.line,
+                        "failure_scenario": f.failure_scenario,
+                        "suggestion": f.suggestion,
+                        "verifier_verdict": f.verifier_verdict,
+                    }
+                },
+                "max_retries": 2,
+                "timeout_seconds": 900,
+            }
+        )
+
+    if not fixup_specs:
+        return 0
+
+    plan_path = ctx.run_dir / "auto_fixup_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "source_task_id": ctx.plan.task_id,
+                "source_review_state": ctx.review_state.spec.id
+                if ctx.review_state
+                else None,
+                "tasks": fixup_specs,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _orchX_log(
+        ctx,
+        f"auto-fixup: wrote {len(fixup_specs)} debugger task(s) to {plan_path.name}",
+    )
+    if ctx.notifier is not None:
+        try:
+            await ctx.notifier.notify(
+                "auto_fixup_planned",
+                {
+                    "task_id": ctx.plan.task_id,
+                    "count": len(fixup_specs),
+                    "plan_path": str(plan_path),
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return len(fixup_specs)
+
+
+class _CompoundNotifier:
+    """Fan-out нескольких NotifierPlugin'ов в один интерфейс.
+
+    Используется, когда в конфиге указано несколько ``notifiers:``.
+    Ошибки одного notifier'а не блокируют другие.
+    """
+
+    def __init__(self, notifiers: list[Any]):
+        self._notifiers = list(notifiers)
+
+    async def notify(self, event: str, payload: dict[str, Any]) -> None:
+        for n in self._notifiers:
+            try:
+                await n.notify(event, payload)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "notifier %s.notify(%s) failed",
+                    type(n).__name__,
+                    event,
+                    exc_info=True,
+                )
+
+
+def _accumulate_cost(
+    ctx: OrchXContext,
+    task_id: str,
+    role: str,
+    outcome: runner.WorkerOutcome,
+) -> None:
+    """P1.3: накопить cost в ctx.total/by_role/by_task + триггерить notifications.
+
+    Опционально шлёт ``cost_alert`` notification на пересечении 50/75/90% бюджета
+    (если ``ctx.notifier`` не None и ``config.max_cost_usd`` задан).
+    """
+    cost = float(getattr(outcome, "cost_usd", 0.0) or 0.0)
+    if cost <= 0:
+        return
+    ctx.total_cost_usd += cost
+    ctx.cost_by_role[role] = ctx.cost_by_role.get(role, 0.0) + cost
+    ctx.cost_by_task[task_id] = ctx.cost_by_task.get(task_id, 0.0) + cost
+    budget = ctx.config.max_cost_usd
+    if budget and budget > 0 and ctx.notifier is not None:
+        ratio = ctx.total_cost_usd / budget
+        prev = (ctx.total_cost_usd - cost) / budget
+        for threshold in (0.5, 0.75, 0.9):
+            if prev < threshold <= ratio:
+                try:
+                    asyncio.ensure_future(
+                        ctx.notifier.notify(
+                            "cost_alert",
+                            {
+                                "task_id": ctx.plan.task_id,
+                                "threshold_pct": int(threshold * 100),
+                                "total_usd": round(ctx.total_cost_usd, 4),
+                                "budget_usd": budget,
+                            },
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 async def _run_one_phase(ctx: OrchXContext, phase: PhaseSpec) -> bool:
@@ -2362,6 +2367,8 @@ async def run_orchX(
     on_ctx_ready=None,
     on_init_progress=None,
     resume: bool = False,
+    *,
+    plugins: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Главная точка входа: прогнать рой целиком.
 
@@ -2393,6 +2400,31 @@ async def run_orchX(
         on_init_progress=on_init_progress,
         resume=resume,
     )
+    # P0.2 / P1.5 / P0.3 / P1.2: подключаем плагины из переданного bag'а.
+    if plugins:
+        ctx.runtime = plugins.get("runtime") or ctx.runtime
+        ctx.memory = plugins.get("memory") or ctx.memory
+        notifiers = plugins.get("notifiers") or []
+        if notifiers:
+            # Compose multiple notifiers в одну fan-out обёртку.
+            ctx.notifier = _CompoundNotifier(notifiers)
+
+    # P1.5: notify start.
+    if ctx.notifier is not None:
+        try:
+            await ctx.notifier.notify(
+                "run_started",
+                {
+                    "task_id": ctx.plan.task_id,
+                    "phases": len(ctx.plan.phases),
+                    "tasks": sum(len(p.tasks) for p in ctx.plan.phases),
+                    "base_branch": ctx.plan.base_branch,
+                    "integration_branch": ctx.integration_branch,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("notifier run_started failed", exc_info=True)
+
     if on_ctx_ready is not None:
         # Сигнал внешнему наблюдателю (CLI/TUI), что контекст создан и можно
         # подписываться на изменения статусов задач/фаз.
@@ -2472,6 +2504,19 @@ async def run_orchX(
             successful = [s for s in ctx.states.values() if s.status == "success"]
             if successful:
                 await _run_reviewer(ctx)
+                # P1.8: auto-fixup chain — blocking findings → debugger tasks.
+                if config.auto_fixup_chain:
+                    fixup_count = await _maybe_spawn_followup_fixups(ctx)
+                    if fixup_count > 0:
+                        _orchX_log(
+                            ctx,
+                            f"auto-fixup: spawned {fixup_count} debugger task(s) "
+                            f"from blocking findings; re-running affected phase",
+                        )
+                        # NB: пока не запускаем повторный pass — это требует
+                        # phase-extension, что-то рисковее. v1 P1.8: только
+                        # генерируем follow-up TaskSpecs и логируем; v2:
+                        # повторный _run_one_phase для синтетической фазы.
             else:
                 _orchX_log(ctx, "auto-review skipped: no successful tasks")
     finally:
@@ -2498,6 +2543,26 @@ async def run_orchX(
         f"failed={summary['counts']['failed']} skipped={summary['counts']['skipped']}"
         + (f" review={summary['review']['status']}" if summary.get("review") else ""),
     )
+
+    # P1.5: notify finish.
+    if ctx.notifier is not None:
+        try:
+            await ctx.notifier.notify(
+                "run_finished",
+                {
+                    "task_id": ctx.plan.task_id,
+                    "counts": summary["counts"],
+                    "total_cost_usd": round(ctx.total_cost_usd, 4),
+                    "halt_reason": halt_reason or None,
+                    "aborted": ctx.aborted,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("notifier run_finished failed", exc_info=True)
+
+    # P0.3 / P2.4: записать результаты в memory plugin (если включён).
+    await _record_run_to_memory(ctx, summary)
+
     return summary
 
 
@@ -2590,6 +2655,19 @@ def _build_summary(ctx: OrchXContext) -> dict[str, Any]:
             sorted(failure_categories.items(), key=lambda kv: -kv[1])
         ),
     }
+    # P1.3: cost block.
+    cost_block: dict[str, Any] = {
+        "total_usd": round(ctx.total_cost_usd, 6),
+        "by_role": {k: round(v, 6) for k, v in ctx.cost_by_role.items()},
+        "by_task": {k: round(v, 6) for k, v in ctx.cost_by_task.items()},
+    }
+    if ctx.config.max_cost_usd is not None:
+        cost_block["budget_usd"] = ctx.config.max_cost_usd
+        cost_block["budget_used_pct"] = (
+            round(100 * ctx.total_cost_usd / ctx.config.max_cost_usd, 1)
+            if ctx.config.max_cost_usd > 0
+            else None
+        )
 
     out: dict[str, Any] = {
         "task_id": ctx.plan.task_id,
@@ -2610,6 +2688,7 @@ def _build_summary(ctx: OrchXContext) -> dict[str, Any]:
         "abort_reason": ctx.abort_reason,
         "halt_reason": ctx.halt_reason,
         "metrics": metrics,
+        "cost": cost_block,
         "config": {
             "auto_review": ctx.config.auto_review,
             "auto_followup": ctx.config.auto_followup,

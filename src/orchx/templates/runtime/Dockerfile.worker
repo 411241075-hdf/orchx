@@ -1,0 +1,40 @@
+# orchX worker image (P1.2)
+#
+# Сборка (из корня orchx-репозитория):
+#   docker build -f src/orchx/templates/runtime/Dockerfile.worker -t orchx-worker:latest .
+#
+# Или (если orchx установлен из PyPI):
+#   docker build -f Dockerfile.worker -t orchx-worker:latest .
+#
+# В контейнер монтируется:
+#   * worktree задачи      → /workspace (RW)
+#   * корень репо          → /repo      (RO)
+#
+# Контейнер запускает orchx-internal-worker (см. ENTRYPOINT), который
+# читает prompt из /workspace/.orchx/docker-prompt.txt и пишет метрики
+# в /workspace/.orchx/docker-metrics.json — оттуда их забирает host-side
+# DockerRuntime.
+
+FROM python:3.13-slim
+
+# Базовые dev-tools, нужные большинству worker'ов: git, rg, curl, ca-certs.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        git \
+        ripgrep \
+        curl \
+        ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Установка orchx + минимальных runtime-зависимостей. В production
+# рекомендуется COPY ./src/orchx /opt/orchx и pip install /opt/orchx
+# для воспроизводимости.
+RUN pip install --no-cache-dir orchx>=0.2.0 || true
+COPY . /opt/orchx-src
+RUN pip install --no-cache-dir /opt/orchx-src
+
+WORKDIR /workspace
+
+# Entry-point — internal CLI, читающий prompt и пишущий метрики.
+# См. orchx/agent/_docker_entry.py (создаётся в P1.2 ниже).
+ENTRYPOINT ["python", "-m", "orchx.agent._docker_entry"]

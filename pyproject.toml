@@ -1,10 +1,10 @@
 [project]
 name = "orchx"
-version = "0.1.0"
+version = "0.2.0"
 description = "Параллельный мультиагентный рой: декомпозирует задачу через LLM-планнер, запускает воркеров в изолированных git worktree-ах, собирает результат и открывает PR."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 authors = [
     { name = "orchX contributors" },
 ]
@@ -17,7 +17,7 @@ classifiers = [
     "Operating System :: POSIX",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",
@@ -40,13 +40,49 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Базовые dev-инструменты (lint/type-check/build/publish).
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "mypy>=1.10",
     "build>=1.2",
     "twine>=5.1",
+]
+# Тестирование (выделено из dev — на CI ставится отдельно).
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5",
+    "pytest-mock>=3",
+]
+# REST/WebSocket dashboard (P1.4).
+server = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "websockets>=12.0",
+]
+# MCP-bridge: clientside, чтобы воркеры могли вызывать tools со сторонних MCP-серверов (P1.1).
+mcp = [
+    "mcp>=1.6",
+]
+# Docker-runtime plugin (P1.2).
+docker = [
+    "docker>=7.1",
+]
+# Browser tool (P1.7).
+browser = [
+    "playwright>=1.47",
+]
+# Embedding-based memory recall (P0.3/P2.4) — без зависимости работает FTS-fallback.
+memory-embed = [
+    "numpy>=1.26",
+]
+# Pydantic уже в основных deps как транзитивная — здесь форсируем минимальную версию для миграции моделей (P3.4).
+pydantic = [
+    "pydantic>=2.7",
+]
+# Всё-в-одном (для удобства разработчиков).
+all = [
+    "orchx[dev,test,server,mcp,docker,browser,memory-embed,pydantic]",
 ]
 
 [project.urls]
@@ -56,6 +92,35 @@ Issues = "https://github.com/411241075-hdf/orchx/issues"
 
 [project.scripts]
 orchx = "orchx.cli:main"
+
+# ---------------------------------------------------------------------------
+# Plugin-slot entry-points (P0.2).
+#
+# Сторонние пакеты могут регистрировать плагины через тот же механизм:
+#   [project.entry-points."orchx.runtime"]
+#   podman = "my_pkg.runtime:PodmanRuntime"
+# ---------------------------------------------------------------------------
+
+[project.entry-points."orchx.runtime"]
+local = "orchx.plugins.runtimes.local:LocalRuntime"
+docker = "orchx.plugins.runtimes.docker:DockerRuntime"
+
+[project.entry-points."orchx.tracker"]
+github = "orchx.plugins.trackers.github:GithubTracker"
+
+[project.entry-points."orchx.scm"]
+github = "orchx.plugins.scm.github:GithubSCM"
+
+[project.entry-points."orchx.notifier"]
+noop = "orchx.plugins.notifiers.noop:NoopNotifier"
+slack = "orchx.plugins.notifiers.slack:SlackNotifier"
+discord = "orchx.plugins.notifiers.discord:DiscordNotifier"
+webhook = "orchx.plugins.notifiers.webhook:WebhookNotifier"
+dashboard = "orchx.web.server:DashboardNotifier"
+
+[project.entry-points."orchx.memory"]
+noop = "orchx.plugins.memory.noop:NoopMemory"
+sqlite = "orchx.plugins.memory.sqlite:SqliteMemory"
 
 [build-system]
 requires = ["setuptools>=73.0.0", "wheel"]
@@ -78,6 +143,8 @@ include = ["orchx*"]
     "templates/*.md",
     "templates/env.example",
     "templates/prompts/*.md",
+    "templates/runtime/Dockerfile.worker",
+    "web/static/*",
     "py.typed",
 ]
 
@@ -107,6 +174,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/orchx/templates/**" = ["E", "F", "T201"]
 "src/orchx/tests/**" = ["T201", "B"]
+# FastAPI Depends/Body/Header — обычный pattern (B008 — false positive).
+"src/orchx/web/**" = ["B008"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -114,9 +183,34 @@ testpaths = ["src/orchx/tests"]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+# Coverage опционально (включается в CI через pytest-cov).
+addopts = [
+    "--strict-markers",
+]
+markers = [
+    "integration: end-to-end интеграционные тесты с FakeLLMClient (медленные)",
+    "slow: тесты, выполняющиеся >1s",
+    "requires_docker: тесты, которым нужен запущенный docker daemon",
+    "requires_network: тесты, которым нужен доступ в сеть",
+]
+
+[tool.coverage.run]
+source = ["src/orchx"]
+omit = [
+    "src/orchx/tests/*",
+    "src/orchx/templates/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = false
 ignore_missing_imports = true
 warn_unused_ignores = true

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Тесты для _fix_literal_escapes_in_python_dash_c.
 
 В прошлом прогоне (orchx/runs/admin-subdomain, задача remove-developer-panel)

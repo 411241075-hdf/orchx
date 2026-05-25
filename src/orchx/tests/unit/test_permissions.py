@@ -319,7 +319,6 @@ def test_python_with_script_two_token_prefix() -> None:
 
 def test_implementer_allows_python_m_pytest(tmp_path) -> None:  # noqa: ANN001
     """Frontmatter implementer-а должен разрешать `python -m pytest …`."""
-    from pathlib import Path
 
     from orchx.agent.frontmatter import load_agent_spec
 
@@ -331,7 +330,6 @@ def test_implementer_allows_python_m_pytest(tmp_path) -> None:  # noqa: ANN001
 
 def test_implementer_blocks_arbitrary_python_script() -> None:
     """`python /tmp/evil.py` НЕ должно матчить allow-list — двухтокенный prefix."""
-    from pathlib import Path
 
     from orchx.agent.frontmatter import load_agent_spec
 
@@ -345,7 +343,6 @@ def test_implementer_blocks_arbitrary_python_script() -> None:
 
 def test_implementer_allows_ruff_check() -> None:
     """`ruff check backend/X.py` — разрешено напрямую (без uv run)."""
-    from pathlib import Path
 
     from orchx.agent.frontmatter import load_agent_spec
 
@@ -357,7 +354,6 @@ def test_implementer_allows_ruff_check() -> None:
 
 def test_implementer_allows_mypy() -> None:
     """`mypy file.py --ignore-missing-imports` — разрешено."""
-    from pathlib import Path
 
     from orchx.agent.frontmatter import load_agent_spec
 

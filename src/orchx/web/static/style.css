@@ -1,0 +1,59 @@
+/* orchX dashboard — Warm Terminal-вдохновлённый минимализм (см. comparison.md).
+   No frameworks, no build. */
+:root {
+  --bg: #121110;
+  --surface: #1a1918;
+  --elevated: #222120;
+  --border: rgba(255, 240, 220, 0.10);
+  --text: #f0ece8;
+  --muted: #a8a29e;
+  --tertiary: #78716c;
+  --accent: #8b9cf7;
+  --accent-tint: rgba(139, 156, 247, 0.12);
+  --success: #22c55e;
+  --error: #ef4444;
+  --warning: #e2a336;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, "Geist Sans", -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+}
+header { padding: 20px 28px; border-bottom: 1px solid var(--border); }
+h1 { margin: 0; font-family: var(--mono); font-weight: 500; font-size: 18px; letter-spacing: -0.01em; }
+h2 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.muted { color: var(--tertiary); font-weight: 400; }
+section { padding: 20px 28px; border-bottom: 1px solid var(--border); }
+.row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+
+button {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-family: var(--sans);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 0;
+}
+button:hover { background: var(--elevated); border-color: var(--accent); }
+
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+th { text-align: left; padding: 6px 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; border-bottom: 1px solid var(--border); }
+td { padding: 8px 10px; border-bottom: 1px solid rgba(255, 240, 220, 0.04); }
+tr:hover td { background: var(--surface); }
+.success { color: var(--success); }
+.error { color: var(--error); }
+.warning { color: var(--warning); }
+
+#events { list-style: none; padding: 0; margin: 0; font-family: var(--mono); font-size: 11px; max-height: 320px; overflow-y: auto; }
+#events li { padding: 4px 0; border-bottom: 1px solid rgba(255, 240, 220, 0.04); }
+#events .event { color: var(--accent); }
+#events .ts { color: var(--tertiary); margin-right: 8px; }

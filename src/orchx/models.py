@@ -224,7 +224,7 @@ def _fix_literal_escapes_in_python_dash_c(cmd: str) -> str:
     if "\\n" not in cmd and "\\t" not in cmd:
         return cmd
 
-    def _repl(m: "re.Match[str]") -> str:
+    def _repl(m: re.Match[str]) -> str:
         prefix, quote, body = m.group(1), m.group(2), m.group(3)
         body = body.replace("\\n", "\n").replace("\\t", "\t")
         return f"{prefix}{quote}{body}{quote}"

@@ -100,7 +100,7 @@ class OrchXRuntime:
         cwd: Path | None = None,
         *,
         extra_prompts_dirs: Iterable[Path] = (),
-    ) -> "OrchXRuntime":
+    ) -> OrchXRuntime:
         """Сконструировать runtime для текущей рабочей директории.
 
         Args:
@@ -132,7 +132,7 @@ class OrchXRuntime:
         project_root: Path,
         *,
         extra_prompts_dirs: Iterable[Path] = (),
-    ) -> "OrchXRuntime":
+    ) -> OrchXRuntime:
         """Сконструировать runtime, когда ``project_root`` уже известен.
 
         Используется в местах, где :func:`detect` уже сработал и положил

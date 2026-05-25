@@ -318,6 +318,11 @@ class Permissions:
     grep: bool = True
     semantic_search: bool = False
     codesearch: bool = True
+    lsp: bool = False
+    """P1.6: разрешён ли набор symbol-tools (find_symbol / find_references /
+    rename_symbol). По умолчанию off (новый capability, opt-in)."""
+    browser: bool = False
+    """P1.7: разрешён ли browser tool (Playwright)."""
     webfetch: bool = False
     websearch: bool = False
     task: bool = False
@@ -456,6 +461,8 @@ def parse_permissions(raw: dict[str, Any]) -> Permissions:
     p.grep = _truthy(raw.get("grep", "allow"), True)
     p.semantic_search = _truthy(raw.get("semantic_search", "deny"), False)
     p.codesearch = _truthy(raw.get("codesearch", "allow"), True)
+    p.lsp = _truthy(raw.get("lsp", "deny"), False)
+    p.browser = _truthy(raw.get("browser", "deny"), False)
     p.webfetch = _truthy(raw.get("webfetch", "deny"), False)
     p.websearch = _truthy(raw.get("websearch", "deny"), False)
     p.task = _truthy(raw.get("task", "deny"), False)

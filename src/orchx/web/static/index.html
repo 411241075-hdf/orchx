@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>orchX dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>orchX <span class="muted">dashboard</span></h1>
+    <p class="muted">live runs · cost · events · logs</p>
+  </header>
+
+  <section id="runs-section">
+    <div class="row">
+      <h2>Runs</h2>
+      <button id="refresh" type="button">Refresh</button>
+      <span class="muted" id="last-update"></span>
+    </div>
+    <table id="runs">
+      <thead>
+        <tr>
+          <th>task_id</th>
+          <th>success</th>
+          <th>failed</th>
+          <th>skipped</th>
+          <th>wall_s</th>
+          <th>cost</th>
+          <th>updated</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="events-section">
+    <div class="row">
+      <h2>Live events</h2>
+      <span id="sse-status" class="muted">connecting…</span>
+    </div>
+    <ul id="events"></ul>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
