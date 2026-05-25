@@ -8,13 +8,18 @@ from orchx.agent.frontmatter import load_agent_spec
 from orchx.agent.permissions import Permissions
 from orchx.agent.prompts import build_system_prompt
 from orchx.agent.tools import ToolContext, build_tool_registry
+from orchx.runtime import OrchXRuntime
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _runtime() -> OrchXRuntime:
+    return OrchXRuntime.from_project_root(REPO_ROOT)
 
 
 def _spec_for_test(tmp_path: Path):  # noqa: ANN202
-    """Берём реального implementer-а — он есть в репо."""
-    return load_agent_spec("implementer", REPO_ROOT)
+    """Берём реального implementer-а — он есть в дефолтных шаблонах пакета."""
+    return load_agent_spec("implementer", _runtime())
 
 
 def test_system_prompt_lists_forbidden_mcp_prefixes(tmp_path: Path) -> None:

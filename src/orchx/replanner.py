@@ -143,7 +143,7 @@ def render_replan_context(ctx: ReplanContext) -> str:
     parts.append("")
     parts.append(
         "1. Перечитай `spec_files` (если есть) и пойми, что именно провалилось.\n"
-        f"2. Перепиши `orchx/runs/{ctx.plan.task_id}/plan.json`:\n"
+        f"2. Перепиши `.orchx/runs/{ctx.plan.task_id}/plan.json`:\n"
         "   - Сохрани оригинальный `task_id`.\n"
         "   - **Не включай уже завершённые фазы** — их код уже в integration ветке.\n"
         "   - Переразбей упавшую фазу на более мелкие задачи, либо найди "

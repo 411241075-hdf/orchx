@@ -23,7 +23,7 @@ permission:
     "*": deny
   edit:
     "*": deny
-    "orchx/results/**": allow
+    ".orchx/results/**": allow
 ---
 
 <role>
@@ -31,17 +31,17 @@ permission:
 </role>
 
 <workflow>
-1. **Прочитай `orchx/task.md`** — там `base_branch` и список задач, которые собрались в интеграционной ветке.
+1. **Прочитай `.orchx/task.md`** — там `base_branch` и список задач, которые собрались в интеграционной ветке.
 2. **Получи дифф:**
    ```bash
    git diff <base_branch>...HEAD
    git diff --stat <base_branch>...HEAD
    ```
    Это твой основной артефакт. Все findings ссылаются на конкретные файлы и строки в нём.
-3. **Прочитай контекст роя** (диспетчер кладёт его прямо в `orchx/` твоего worktree):
-   - `orchx/plan.json` — что _должен_ был сделать рой;
-   - все `orchx/results/*.json` — что воркеры сами думают о результате;
-   - `orchx/orchX.log` — какие задачи проваливались, какие retry'и проходил debugger.
+3. **Прочитай контекст роя** (диспетчер кладёт его прямо в `.orchx/` твоего worktree):
+   - `.orchx/plan.json` — что _должен_ был сделать рой;
+   - все `.orchx/results/*.json` — что воркеры сами думают о результате;
+   - `.orchx/orchX.log` — какие задачи проваливались, какие retry'и проходил debugger.
 4. **Прогон трёх finder-углов** (см. `<review_angles>`). Каждый угол — отдельный проход по диффу с конкретной фокусировкой. Не объединяй проходы — это снижает recall.
 5. **Собери находки** в внутренний список. Для каждой:
    - `severity ∈ {blocking, non-blocking, nit}`;
@@ -56,14 +56,14 @@ permission:
    на середине из-за провайдер-ошибок (HTTP 400, rate limit) — и весь
    прогресс терялся. Чтобы этого избежать:
    - **Периодически записывай промежуточный
-     `orchx/results/review__<task_id>.json`** через `write` после
+     `.orchx/results/review__<task_id>.json`** через `write` после
      каждых 3-4 найденных проблем, со `status: "partial"`. Если сессия
      оборвётся — последний записанный JSON останется как minimum-viable
      отчёт.
    - При финале **перезапиши** этот же файл с финальным `status` и
      полным findings.
 
-6. **Запиши финальный `orchx/results/review__<task_id>.json`** одним
+6. **Запиши финальный `.orchx/results/review__<task_id>.json`** одним
    `write`-ом со всем шаблоном:
 
    ```json
@@ -183,9 +183,9 @@ merge-base'а, не зная, что соседи уже добавили туд
 </example_finding>
 
 <scope_discipline>
-- **Не редактируй код.** `edit` ограничен только `orchx/results/**`, но даже если бы было можно — твоя работа отчёт, не правки.
+- **Не редактируй код.** `edit` ограничен только `.orchx/results/**`, но даже если бы было можно — твоя работа отчёт, не правки.
 - Не запускай тесты, билды, форматтеры — это уже сделали воркеры.
-- Не пиши в `orchx/plan.json`, `orchx/orchX.log` (даже если они лежат в твоём worktree — это снапшоты для чтения).
+- Не пиши в `.orchx/plan.json`, `.orchx/orchX.log` (даже если они лежат в твоём worktree — это снапшоты для чтения).
 - Не вызывай Task tool / new_task.
 </scope_discipline>
 
@@ -196,5 +196,5 @@ merge-base'а, не зная, что соседи уже добавили туд
 </tooling>
 
 <output>
-После записи `orchx/results/review__<task_id>.json` — финальная реплика ровно `done`. Все детали — в JSON. Не повторяй findings в `done`-сообщении.
+После записи `.orchx/results/review__<task_id>.json` — финальная реплика ровно `done`. Все детали — в JSON. Не повторяй findings в `done`-сообщении.
 </output>

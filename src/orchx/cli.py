@@ -118,7 +118,12 @@ def _load_orchx_env(repo_root: Path) -> None:
     ``missing required env vars``. Теперь используем встроенный парсер
     (``_parse_dotenv_file``) — никакой внешней зависимости.
     """
-    env_path = repo_root / "orchx" / ".env"
+    # Новая раскладка: <project>/.orchx/.env. Раньше (до выделения orchx
+    # в отдельный пакет) использовалась открытая папка orchx/.env — её
+    # тоже подхватываем как fallback, чтобы апдейт не сломал старые проекты.
+    env_path_new = repo_root / ".orchx" / ".env"
+    env_path_legacy = repo_root / "orchx" / ".env"
+    env_path = env_path_new if env_path_new.exists() else env_path_legacy
     if not env_path.exists():
         return
     file_vars = _parse_dotenv_file(env_path)
@@ -463,7 +468,7 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
 
     prompt = (
         f"User task:\n\n{args.task}\n\n"
-        "Build an orchX plan and write it to orchx/_pending/plan.json. "
+        "Build an orchX plan and write it to .orchx/_pending/plan.json. "
         "Follow the planner agent rules strictly."
     )
 
@@ -483,7 +488,7 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
         tui.print_dim(f"  full log: {pending_log}")
         return rc
     if not pending_plan.exists():
-        tui.print_error("Planner finished but did not write orchx/_pending/plan.json.")
+        tui.print_error("Planner finished but did not write .orchx/_pending/plan.json.")
         tui.print_dim(f"  full log: {pending_log}")
         return 1
 
@@ -722,7 +727,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             init_spinner.stop()
             try:
                 await init_spinner_task
-            except asyncio.CancelledError, Exception:  # noqa: BLE001
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
             tui.print_error("Cannot start orchX: working tree has uncommitted changes")
             tui.out("")
@@ -735,7 +740,7 @@ async def _cmd_run(args: argparse.Namespace) -> int:
         init_spinner.stop()
         try:
             await init_spinner_task
-        except asyncio.CancelledError, Exception:  # noqa: BLE001
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
         board = board_ref.get("board")
         if board is not None:
@@ -876,6 +881,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Сколько последних run'ов показать (по умолчанию 20).",
     )
 
+    init_p = sub.add_parser(
+        "init",
+        help=(
+            "Развернуть .orchx/ в текущем проекте (env.example, PROJECT.md, "
+            "дефолтные промпты ролей) и обновить .gitignore."
+        ),
+    )
+    init_p.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Перезаписать существующие файлы в .orchx/ (по умолчанию они "
+            "сохраняются — повторный init безопасен и просто добавляет "
+            "недостающее)."
+        ),
+    )
+    init_p.add_argument(
+        "--minimal",
+        action="store_true",
+        help=(
+            "Не копировать дефолтные промпты в .orchx/prompts/. Рой будет "
+            "использовать промпты, шиппящиеся с пакетом. Удобно если "
+            "кастомизировать роли пока не нужно."
+        ),
+    )
+
     logs_p = sub.add_parser(
         "logs",
         help="Просмотр логов run'а",
@@ -901,8 +932,41 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+async def _cmd_init(args: argparse.Namespace) -> int:
+    """Развернуть `.orchx/` в текущем git-проекте.
+
+    Идемпотентно: можно гонять много раз, существующие файлы не теряются
+    (если только не передан ``--force``). После успешного init'а рой
+    готов к ``orchx all "<task>"`` — нужно только заполнить ``.orchx/.env``
+    своими ORCHX_LLM_* переменными.
+    """
+    from .init_project import init_project
+
+    repo_root = _detect_repo_root()
+    report = init_project(
+        repo_root,
+        force=getattr(args, "force", False),
+        minimal=getattr(args, "minimal", False),
+    )
+    tui.banner("orchX init")
+    for ln in report.describe().splitlines():
+        tui.out(ln)
+
+    env_dst = report.runtime_dir / ".env"
+    env_example = report.runtime_dir / ".env.example"
+    if env_example.exists() and not env_dst.exists():
+        tui.out("")
+        tui.out("Next steps:")
+        tui.out(f"  1. cp {env_example.relative_to(repo_root)} "
+                f"{env_dst.relative_to(repo_root)}")
+        tui.out(f"  2. edit {env_dst.relative_to(repo_root)} — set "
+                f"ORCHX_LLM_BASE_URL, ORCHX_LLM_API_KEY, ORCHX_MODEL")
+        tui.out("  3. orchx all \"<your task>\"")
+    return 0
+
+
 async def _cmd_list(args: argparse.Namespace) -> int:
-    """Показать список run'ов в `orchx/runs/`."""
+    """Показать список run'ов в `.orchx/runs/`."""
     repo_root = _detect_repo_root()
     runs_dir = paths.runs_dir(repo_root)
     if not runs_dir.exists():
@@ -1026,6 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
         "plan": _cmd_plan,
         "run": _cmd_run,
         "all": _cmd_all,
+        "init": _cmd_init,
         "list": _cmd_list,
         "logs": _cmd_logs,
     }[args.cmd]

@@ -175,7 +175,7 @@ class BashTool(Tool):
             try:
                 data = await asyncio.wait_for(t, timeout=2.0)
                 return data if isinstance(data, bytes) else b""
-            except TimeoutError, asyncio.CancelledError:
+            except (TimeoutError, asyncio.CancelledError):
                 t.cancel()
                 try:
                     data = await t

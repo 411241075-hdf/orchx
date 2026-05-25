@@ -368,7 +368,7 @@ class LLMClient:
                 # finish_reason обычно прилетает в последней дельте.
                 try:
                     choice = chunk.choices[0]
-                except AttributeError, IndexError:
+                except (AttributeError, IndexError):
                     continue
                 if getattr(choice, "finish_reason", None):
                     finish_reason = choice.finish_reason
@@ -416,7 +416,7 @@ class LLMClient:
                 args = json.loads(args_str) if args_str else {}
                 if not isinstance(args, dict):
                     args = {}
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 args = {}
             parsed_calls.append(
                 ToolCall(

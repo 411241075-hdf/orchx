@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.Python
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build
+build/
+dist/
+*.tar.gz
+*.whl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Env
+.env
+.env.local
+venv/
+.venv/
+env/
+
+# orchX runtime в собственном репо (если будем дёргать orchx внутри orchx-репо)
+.orchx/runs/
+.orchx/_pending/
+.orchx/.env
+
+# Tests artefacts
+.coverage
+htmlcov/

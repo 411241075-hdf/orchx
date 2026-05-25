@@ -22,6 +22,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
+from ...runtime import WORKER_RUNTIME_DIR_NAME
 from ..frontmatter import AgentSpec
 from ..permissions import Permissions
 from . import Tool, ToolContext, ToolResult, permission_denied
@@ -187,7 +188,7 @@ class TaskTool(Tool):
         # Лог sub-агента — в subtasks/<uuid>.log внутри worktree, чтобы
         # потом можно было отдебажить.
         sub_id = uuid.uuid4().hex[:8]
-        sub_log = ctx.cwd / "orchx" / "subtasks" / f"{sub_id}.log"
+        sub_log = ctx.cwd / WORKER_RUNTIME_DIR_NAME / "subtasks" / f"{sub_id}.log"
 
         # Спавним child-процесс с пометкой depth → его собственный TaskTool
         # тоже откажется работать.

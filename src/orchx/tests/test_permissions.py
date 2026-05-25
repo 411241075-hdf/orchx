@@ -2,12 +2,29 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from orchx.agent.permissions import (
     INJECTION_SENTINEL,
     Permissions,
     extract_command_prefix,
     parse_permissions,
 )
+from orchx.runtime import OrchXRuntime
+
+# Корень нового orchx-репо. Дефолтные промпты подхватятся из
+# ``<package>/templates/prompts/``.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _runtime() -> OrchXRuntime:
+    """OrchXRuntime, указывающий на корень тестового репо.
+
+    Поскольку ``.orchx/prompts/`` в тесте отсутствует, каскад поиска
+    отдаст дефолтные промпты из пакета — это и есть то, что мы тестируем
+    (валидность шиппящихся ролевых .md).
+    """
+    return OrchXRuntime.from_project_root(_REPO_ROOT)
 
 
 def test_default_permissions_match_kilo_defaults() -> None:
@@ -257,14 +274,14 @@ def test_edit_path_gating_specific_wins_over_wildcard() -> None:
         {
             "edit": {
                 "*": "deny",
-                "orchx/_pending/plan.json": "allow",
-                "orchx/runs/*/plan.json": "allow",
+                ".orchx/_pending/plan.json": "allow",
+                ".orchx/runs/*/plan.json": "allow",
             }
         }
     )
-    assert p.edit_allowed("orchx/_pending/plan.json") is True
-    assert p.edit_allowed("orchx/runs/foo-bar/plan.json") is True
-    assert p.edit_allowed("backend/foo.py") is False
+    assert p.edit_allowed(".orchx/_pending/plan.json") is True
+    assert p.edit_allowed(".orchx/runs/foo-bar/plan.json") is True
+    assert p.edit_allowed("src/foo.py") is False
 
 
 def test_edit_bool_true_allows_anything() -> None:
@@ -306,8 +323,8 @@ def test_implementer_allows_python_m_pytest(tmp_path) -> None:  # noqa: ANN001
 
     from orchx.agent.frontmatter import load_agent_spec
 
-    repo_root = Path(__file__).resolve().parents[2]
-    spec = load_agent_spec("implementer", repo_root)
+    runtime = _runtime()
+    spec = load_agent_spec("implementer", runtime)
     hit = spec.permissions.bash_check("python -m pytest tests/foo -q")
     assert hit.allowed is True, hit.reason
 
@@ -318,8 +335,8 @@ def test_implementer_blocks_arbitrary_python_script() -> None:
 
     from orchx.agent.frontmatter import load_agent_spec
 
-    repo_root = Path(__file__).resolve().parents[2]
-    spec = load_agent_spec("implementer", repo_root)
+    runtime = _runtime()
+    spec = load_agent_spec("implementer", runtime)
     hit = spec.permissions.bash_check("python /tmp/evil.py")
     assert hit.allowed is False
     # Префикс должен быть двухтокенным `python /tmp/evil.py`.
@@ -332,8 +349,8 @@ def test_implementer_allows_ruff_check() -> None:
 
     from orchx.agent.frontmatter import load_agent_spec
 
-    repo_root = Path(__file__).resolve().parents[2]
-    spec = load_agent_spec("implementer", repo_root)
+    runtime = _runtime()
+    spec = load_agent_spec("implementer", runtime)
     hit = spec.permissions.bash_check("ruff check backend/foo.py")
     assert hit.allowed is True
 
@@ -344,8 +361,8 @@ def test_implementer_allows_mypy() -> None:
 
     from orchx.agent.frontmatter import load_agent_spec
 
-    repo_root = Path(__file__).resolve().parents[2]
-    spec = load_agent_spec("implementer", repo_root)
+    runtime = _runtime()
+    spec = load_agent_spec("implementer", runtime)
     hit = spec.permissions.bash_check(
         "mypy backend/foo.py --ignore-missing-imports --no-incremental"
     )

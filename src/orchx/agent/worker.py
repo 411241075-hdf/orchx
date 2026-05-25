@@ -266,7 +266,7 @@ async def run_agent(
             резолвятся отсюда.
         repo_root: Корень репозитория (для info-строки в system-prompt'е).
         user_prompt: ``user``-сообщение от диспетчера. Обычно короткое
-            «прочитай ``orchx/task.md`` и сделай задачу».
+            «прочитай ``.orchx/task.md`` и сделай задачу».
         llm: Базовый LLM-клиент. Внутри вызовем ``llm.for_role(role, effort=...)``
             чтобы поднять per-role override модели/effort'а.
         effort: Reasoning-effort (``low|medium|high|xhigh``). ``None`` → не
@@ -278,7 +278,12 @@ async def run_agent(
             начало tool-вызова). Используется TUI live-доской.
     """
     # Загрузим спеку роли (system prompt + permissions + max_steps).
-    spec = _fm.load_agent_spec(role, repo_root)
+    # Каскад поиска промпта — через OrchXRuntime: сначала
+    # <project>/.orchx/prompts/, затем дефолт пакета (templates/prompts).
+    from ..runtime import OrchXRuntime
+
+    runtime = OrchXRuntime.from_project_root(repo_root)
+    spec = _fm.load_agent_spec(role, runtime)
     return await run_agent_with_spec(
         spec=spec,
         cwd=cwd,

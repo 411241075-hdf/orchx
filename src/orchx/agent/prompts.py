@@ -1,7 +1,7 @@
 """Сборка системного промпта воркера.
 
 System prompt = шапка с environment + список доступных tool'ов и permissions
-+ markdown-body из ``orchx/prompts/orchX-<role>.md`` (без frontmatter).
++ markdown-body из ``orchX-<role>.md`` (без frontmatter).
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import platform
 from datetime import date
 from pathlib import Path
 
+from ..runtime import WORKER_RUNTIME_DIR_NAME
 from .frontmatter import AgentSpec
 from .permissions import describe_permissions
 
@@ -37,6 +38,23 @@ _FORBIDDEN_TOOL_SUFFIXES = (
 )
 
 
+def _read_project_context(repo_root: Path) -> str:
+    """Прочитать ``<repo>/.orchx/PROJECT.md`` если он есть.
+
+    PROJECT.md описывает стек проекта (фреймворки, registry-файлы, запреты,
+    конвенции коммитов). Все роли получают его как блок ``# Project context``
+    в system prompt — это альтернатива тому, чтобы хардкодить специфику в
+    самих ролях. Без файла этот блок просто опускается.
+    """
+    candidate = repo_root / ".orchx" / "PROJECT.md"
+    if not candidate.is_file():
+        return ""
+    try:
+        return candidate.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def build_system_prompt(
     spec: AgentSpec,
     *,
@@ -56,6 +74,10 @@ def build_system_prompt(
             генерации блока «Tool capabilities». Если не задан — блок
             опускается (но имена всё равно перечисляются).
     """
+    project_context = _read_project_context(repo_root)
+    project_block = (
+        f"# Project context\n{project_context}\n\n" if project_context else ""
+    )
     tools_line = ", ".join(tool_names) if tool_names else "(none)"
     forbidden_prefixes = ", ".join(f"`{p}`" for p in _FORBIDDEN_TOOL_PREFIXES)
     forbidden_suffixes = ", ".join(f"`{s}`" for s in _FORBIDDEN_TOOL_SUFFIXES)
@@ -110,12 +132,14 @@ def build_system_prompt(
         f"avoids the unique-match error path of single-occurrence `edit`.\n"
         f"\n"
         f"{capabilities_block}"
+        f"{project_block}"
         f"# Permissions\n"
         f"{describe_permissions(spec.permissions)}\n"
         f"\n"
         f"# Task contract\n"
-        f"Your task contract is in `orchx/task.md` inside the working "
-        f"directory. Read it first. Write your final result to the JSON path "
+        f"Your task contract is in `{WORKER_RUNTIME_DIR_NAME}/task.md` "
+        f"inside the working directory. Read it first. Write your final "
+        f"result to the JSON path "
         f"it specifies. After writing, finish with the short reply that the "
         f"role section instructs (e.g. `done` for implementer/tester, "
         f"`plan written` for planner).\n"

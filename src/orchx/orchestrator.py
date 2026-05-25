@@ -34,6 +34,7 @@ from typing import Any
 
 from . import acceptance, paths, replanner, runner, worktree
 from .agent.llm import LLMClient, LLMConfig
+from .runtime import WORKER_RUNTIME_DIR_NAME
 from .dag import phase_levels
 from .models import (
     AcceptanceCheck,
@@ -380,7 +381,9 @@ async def _restore_states_from_results(ctx: OrchXContext) -> None:
     integration worktree. Если есть и `status: success` — пропускаем
     задачу при следующем запуске. Уже завершённые фазы помечаем тоже.
     """
-    integration_results_dir = ctx.integration_worktree / "orchx" / "results"
+    integration_results_dir = (
+        ctx.integration_worktree / WORKER_RUNTIME_DIR_NAME / "results"
+    )
     if not integration_results_dir.is_dir():
         return
     for state in ctx.states.values():
@@ -568,10 +571,10 @@ def _write_task_artifacts(
     Returns:
         Путь к task.md внутри worktree.
     """
-    orchX_dir = state.worktree_path / "orchx"
+    orchX_dir = state.worktree_path / WORKER_RUNTIME_DIR_NAME
     orchX_dir.mkdir(parents=True, exist_ok=True)
     (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
-    result_path_rel = f"orchx/results/{state.spec.id}.json"
+    result_path_rel = f"{WORKER_RUNTIME_DIR_NAME}/results/{state.spec.id}.json"
     task_md_content = runner.render_task_md(
         template=ctx.task_template,
         task=state.spec,
@@ -595,9 +598,10 @@ def _write_task_artifacts(
 def _build_worker_prompt() -> str:
     """Короткое user-сообщение для воркера — всё содержательное в task.md."""
     return (
-        "Read orchx/task.md carefully and execute it as an orchX worker. "
-        "Write the result JSON to the path specified in the task file. "
-        "Do not exceed the allowed file scope. Finish with a short 'done' line."
+        f"Read {WORKER_RUNTIME_DIR_NAME}/task.md carefully and execute it as "
+        f"an orchX worker. Write the result JSON to the path specified in "
+        f"the task file. Do not exceed the allowed file scope. Finish with "
+        f"a short 'done' line."
     )
 
 
@@ -967,10 +971,10 @@ async def _resolve_merge_conflict(
         return False
 
     merger_id = f"merger__{state.spec.id}"
-    orchX_dir = ctx.integration_worktree / "orchx"
+    orchX_dir = ctx.integration_worktree / WORKER_RUNTIME_DIR_NAME
     orchX_dir.mkdir(parents=True, exist_ok=True)
     (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
-    result_path_rel = f"orchx/results/{merger_id}.json"
+    result_path_rel = f"{WORKER_RUNTIME_DIR_NAME}/results/{merger_id}.json"
     result_path = ctx.integration_worktree / result_path_rel
 
     task_md = _render_merger_task_md(
@@ -1240,7 +1244,7 @@ def _spec_from_followup(
             AcceptanceCheck(
                 type="file_exists",
                 description=f"followup {new_id} produced its result.json",
-                path=f"orchx/results/{new_id}.json",
+                path=f"{WORKER_RUNTIME_DIR_NAME}/results/{new_id}.json",
             ),
         ),
         max_retries=0,
@@ -1401,10 +1405,10 @@ async def _run_pre_merge_review(
         debugger-context'а.
     """
     review_id = f"premerge__{state.spec.id}__attempt{state.attempt_count}"
-    orchX_dir = state.worktree_path / "orchx"
+    orchX_dir = state.worktree_path / WORKER_RUNTIME_DIR_NAME
     orchX_dir.mkdir(parents=True, exist_ok=True)
     (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
-    result_rel = f"orchx/results/{review_id}.json"
+    result_rel = f"{WORKER_RUNTIME_DIR_NAME}/results/{review_id}.json"
     result_path = state.worktree_path / result_rel
 
     task_md = _render_pre_merge_review_task_md(
@@ -1429,10 +1433,10 @@ async def _run_pre_merge_review(
         repo_root=ctx.repo_root,
         role="reviewer",
         prompt=(
-            "Read orchx/task.md. Run a focused pre-merge review of THIS "
-            "task's diff (not the whole integration branch). Write "
-            f"`{result_rel}` with a structured review_report. Finish with "
-            "the literal word `done`."
+            f"Read {WORKER_RUNTIME_DIR_NAME}/task.md. Run a focused "
+            f"pre-merge review of THIS task's diff (not the whole "
+            f"integration branch). Write `{result_rel}` with a structured "
+            f"review_report. Finish with the literal word `done`."
         ),
         timeout_s=600,
         log_file=log_file,
@@ -1665,14 +1669,17 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
             f"Review the full integration diff between {ctx.plan.base_branch} "
             f"and {ctx.integration_branch}. Report issues; do NOT modify code."
         ),
-        inputs=("orchx/plan.json",),
+        inputs=(f"{WORKER_RUNTIME_DIR_NAME}/plan.json",),
         outputs=(),
-        file_scope=("orchx/results/**",),
+        file_scope=(f"{WORKER_RUNTIME_DIR_NAME}/results/**",),
         acceptance=(
             AcceptanceCheck(
                 type="file_exists",
                 description="reviewer wrote result.json",
-                path=f"orchx/results/review__{ctx.plan.task_id}.json",
+                path=(
+                    f"{WORKER_RUNTIME_DIR_NAME}/results/"
+                    f"review__{ctx.plan.task_id}.json"
+                ),
             ),
         ),
         max_retries=0,
@@ -1685,10 +1692,10 @@ async def _run_reviewer(ctx: OrchXContext) -> TaskState | None:
     _orchX_log(ctx, f"auto-review starting on {review_branch}")
 
     # Подготовить task.md и контекст ревью.
-    orchX_dir = review_wt / "orchx"
+    orchX_dir = review_wt / WORKER_RUNTIME_DIR_NAME
     orchX_dir.mkdir(parents=True, exist_ok=True)
     (orchX_dir / "results").mkdir(parents=True, exist_ok=True)
-    result_path_rel = f"orchx/results/{review_spec.id}.json"
+    result_path_rel = f"{WORKER_RUNTIME_DIR_NAME}/results/{review_spec.id}.json"
     review_state.result_path = review_wt / result_path_rel
 
     # Скопируем активный план и журнал прогона прямо в worktree reviewer'а,

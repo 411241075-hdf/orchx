@@ -1,0 +1,122 @@
+[project]
+name = "orchx"
+version = "0.1.0"
+description = "Параллельный мультиагентный рой: декомпозирует задачу через LLM-планнер, запускает воркеров в изолированных git worktree-ах, собирает результат и открывает PR."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "orchX contributors" },
+]
+keywords = ["llm", "agents", "swarm", "multi-agent", "git", "worktree", "orchestrator"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    # OpenAI-совместимый клиент. Все вызовы LLM идут через него — orchx
+    # умеет работать с любым endpoint'ом, у которого есть /v1/chat/completions
+    # с tool calling (proxies, OpenRouter, vLLM, Ollama-shim).
+    "openai>=1.50",
+    # YAML-frontmatter в .md-промптах ролей.
+    "PyYAML>=6.0",
+    # HTTP-клиент (используется поверх openai SDK для управления таймаутами).
+    "httpx>=0.27",
+    # WebFetch tool (опционально включаемый): HTML→Markdown конвертация для
+    # ролей, которым нужно читать внешние доки. По умолчанию tool отключён
+    # через permission.webfetch: deny.
+    "markdownify>=0.13.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "build>=1.2",
+    "twine>=5.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/411241075-hdf/orchx"
+Repository = "https://github.com/411241075-hdf/orchx"
+Issues = "https://github.com/411241075-hdf/orchx/issues"
+
+[project.scripts]
+orchx = "orchx.cli:main"
+
+[build-system]
+requires = ["setuptools>=73.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["orchx*"]
+
+[tool.setuptools.package-data]
+# orchX шиппит:
+#  - JSON-схемы плана/результата (читаются runtime'ом из package_root/schemas);
+#  - шаблон task.md (рендер контракта для воркера);
+#  - дефолтные роль-промпты (templates/prompts/orchX-*.md);
+#  - дефолтные .env.example/PROJECT.md/README.md (templates/) для `orchx init`;
+#  - py.typed маркер для type checker'ов.
+"orchx" = [
+    "schemas/*.json",
+    "schemas/*.md",
+    "templates/*.md",
+    "templates/env.example",
+    "templates/prompts/*.md",
+    "py.typed",
+]
+
+# ---------------------------------------------------------------------------
+# Линтер / типы / тесты
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "T201", # print
+]
+ignore = [
+    "E501",  # line-too-long — у нас встречаются длинные строки в текстовых промптах/таск-файлах.
+    "E741",  # ambiguous-variable-name — l/O иногда нужны.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/orchx/templates/**" = ["E", "F", "T201"]
+"src/orchx/tests/**" = ["T201", "B"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["src/orchx/tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+warn_unused_ignores = true

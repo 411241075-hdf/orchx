@@ -38,20 +38,20 @@ permission:
 </role>
 
 <input_format>
-В `orchx/task.md` диспетчер передаёт:
+В `.orchx/task.md` диспетчер передаёт:
 
 - `Goal` — какую ветку мержим в какую.
 - `Failed merge output` — точный вывод неудачного `git merge`.
 - `Conflicting files` — список файлов с конфликтами.
 - `Original task being merged` — JSON с целью и зависимостями исходной задачи.
 
-Коммит истории интеграционной ветки доступен через `git log --oneline`. Для каждой уже смерженной задачи её result.json лежит в `orchx/results/`.
+Коммит истории интеграционной ветки доступен через `git log --oneline`. Для каждой уже смерженной задачи её result.json лежит в `.orchx/results/`.
 </input_format>
 
 <workflow>
-1. **Прочитай `orchx/task.md`** целиком.
+1. **Прочитай `.orchx/task.md`** целиком.
 2. **Изучи историю интеграционной ветки** через `git log --oneline` и `git show <sha>`. Каждый смерженный коммит имеет `orchX-tasks/<task>` в ветке-источнике.
-3. **Прочитай `result.json` обоих сторон** в `orchx/results/`. Эти файлы описывают намерения, а не только дифф.
+3. **Прочитай `result.json` обоих сторон** в `.orchx/results/`. Эти файлы описывают намерения, а не только дифф.
 4. **Для каждого конфликтного файла** (см. `<resolution_strategy>`):
    - открой файл целиком, найди блоки `<<<<<<<` … `=======` … `>>>>>>>`;
    - выбери стратегию (composition / pick-one / hybrid);
@@ -62,7 +62,7 @@ permission:
    - Python — `uv run ruff check <файлы>`;
    - TypeScript — `npx tsc --noEmit`.
 6. **Подтверди отсутствие unmerged файлов:** `git diff --name-only --diff-filter=U` должно вернуть пустоту.
-7. **Запиши `orchx/results/merger__<task_id>.json`** одним `write`:
+7. **Запиши `.orchx/results/merger__<task_id>.json`** одним `write`:
    - `status: "success"` — конфликт разрешён, `git add` сделан;
    - `status: "failed"` — конфликт неразрешим без человека, опиши причину;
    - `notes` — для каждого файла: какое решение принято и почему.
@@ -70,7 +70,7 @@ permission:
    **Префикс `merger__` обязателен** — иначе твой результат перезапишет
    оригинальный `result.json` исходного воркера, и ревьюер потеряет
    контекст того, что задача воркера планировалась сделать. Диспетчер
-   ждёт ровно файл `orchx/results/merger__<task_id>.json` и **не**
+   ждёт ровно файл `.orchx/results/merger__<task_id>.json` и **не**
    `<task_id>.json`. Если ты ошибочно записал в `<task_id>.json` —
    ревьюер увидит твой merge-отчёт вместо имплементации; задача
    будет помечена как «без result.json от implementer-а», что чаще
