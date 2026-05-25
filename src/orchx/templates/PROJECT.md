@@ -13,7 +13,7 @@
 
 ## Стек и runtime
 
-- **Язык(и):** `<Python 3.12 / TypeScript / Go / …>`
+- **Язык(и):** `<Python 3.13 / TypeScript / Go / …>`
 - **Фреймворки:** `<FastAPI / React / Next.js / …>`
 - **БД:** `<Postgres / SQLite / нет>`
 - **Менеджер пакетов:** `<uv / poetry / pip / npm / pnpm>`
@@ -23,7 +23,7 @@
 
 ## Раскладка репозитория
 
-```
+```text
 <repo>/
 ├── src/                # основной код
 ├── tests/              # тесты
