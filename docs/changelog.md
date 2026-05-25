@@ -61,7 +61,7 @@ Versioning: [Semantic Versioning](https://semver.org/) (pre-1.0 — minor мож
 
 ## [0.2.0] — 2026-05-25
 
-Большой релиз по roadmap'у из [`docs/recommendations.md`](./recommendations.md).
+Большой релиз по внутреннему roadmap'у.
 **Breaking changes**: см. секцию ниже.
 
 ### Added (P0 — критические)
@@ -100,8 +100,6 @@ Versioning: [Semantic Versioning](https://semver.org/) (pre-1.0 — minor мож
 - `docs/architecture.md` — полный архитектурный обзор 0.2.
 - `docs/contributing.md` — как добавить плагин/tool/тест.
 - `docs/changelog.md` (этот файл).
-- `docs/comparison.md` — сравнение с OpenHands/Ruflo/AO (4 проекта).
-- `docs/recommendations.md` — roadmap, по которому шёл этот релиз.
 - `Makefile` для всех dev-задач.
 - GitHub Actions CI.
 - `pyproject.toml` extras: `test`, `server`, `mcp`, `docker`, `browser`, `memory-embed`, `pydantic`, `all`.

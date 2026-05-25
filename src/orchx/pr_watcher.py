@@ -1,4 +1,4 @@
-"""PR feedback loop watcher (P0.4 — см. docs/recommendations.md).
+"""PR feedback loop watcher (P0.4).
 
 После opening PR orchX-watcher не завершается, а опрашивает GitHub
 через :class:`GithubSCM` plugin и реагирует на события:
@@ -11,8 +11,7 @@
   если ``action: auto-merge``).
 
 Конфигурация — через ``.orchx/config.yaml`` секция ``reactions:``
-(см. docs/recommendations.md → P0.4). По умолчанию все реакции
-выключены, watcher не запускается.
+(P0.4). По умолчанию все реакции выключены, watcher не запускается.
 
 CLI:
 

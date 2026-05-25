@@ -1,8 +1,7 @@
 # orchX 0.2 — architecture
 
 > Эта страница описывает архитектуру orchX **версии 0.2.0** (после
-> P0/P1/P2 рефакторинга — см. [`recommendations.md`](./recommendations.md)).
-> Для сравнительного анализа с OpenHands/Ruflo/AO — [`comparison.md`](./comparison.md).
+> P0/P1/P2 рефакторинга).
 
 ---
 

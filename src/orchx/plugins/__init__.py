@@ -1,4 +1,4 @@
-"""Plugin-slot system orchX (P0.2 — см. docs/recommendations.md).
+"""Plugin-slot system orchX (P0.2).
 
 orchX поддерживает **5 plugin slot'ов**:
 

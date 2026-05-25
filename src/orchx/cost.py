@@ -38,34 +38,12 @@ class ModelPrice:
 # Дефолтные prices — best-effort на момент написания (2025-Q2 публичные rate cards).
 # Не претендуем на 100% актуальность; users override через .orchx/costs.yaml.
 _DEFAULT_PRICES: dict[str, ModelPrice] = {
-    # OpenAI
-    r"gpt-4o\b.*": ModelPrice(2.5, 10.0),
-    r"gpt-4o-mini\b.*": ModelPrice(0.15, 0.6),
-    r"gpt-4\.1$": ModelPrice(2.0, 8.0),
-    r"gpt-4\.1-mini": ModelPrice(0.4, 1.6),
-    r"gpt-4-turbo.*": ModelPrice(10.0, 30.0),
-    r"o1$|o1-preview": ModelPrice(15.0, 60.0),
-    r"o1-mini": ModelPrice(3.0, 12.0),
-    r"o3$": ModelPrice(20.0, 80.0),
-    r"o3-mini": ModelPrice(4.0, 16.0),
     # Anthropic
-    r".*claude-3-7-sonnet.*|.*sonnet-4.*|.*claude-sonnet-4.*": ModelPrice(3.0, 15.0),
-    r".*claude-3-5-sonnet.*|.*claude-sonnet-3.5.*": ModelPrice(3.0, 15.0),
-    r".*claude-3-5-haiku.*|.*haiku-3.5.*": ModelPrice(0.8, 4.0),
-    r".*claude-3-haiku.*": ModelPrice(0.25, 1.25),
-    r".*claude-3-opus.*|.*claude-opus.*": ModelPrice(15.0, 75.0),
-    # Google
-    r".*gemini-2\.0-flash.*": ModelPrice(0.075, 0.3),
-    r".*gemini-2\.5-pro.*": ModelPrice(1.25, 10.0),
-    r".*gemini-1\.5-pro.*": ModelPrice(1.25, 5.0),
-    r".*gemini-1\.5-flash.*": ModelPrice(0.075, 0.3),
-    # DeepSeek
-    r".*deepseek-(chat|v3).*": ModelPrice(0.14, 0.28),
-    r".*deepseek-(coder|r1).*": ModelPrice(0.14, 2.19),
-    # Open-source / hosted
-    r".*qwen.*-coder.*": ModelPrice(0.5, 1.5),
-    r".*llama-3\.[12]-70b.*": ModelPrice(0.65, 0.65),
-    r".*llama-3\.1-8b.*": ModelPrice(0.05, 0.05),
+    r".*claude-haiku-4.*": ModelPrice(1.0, 5.0),
+    r".*claude-sonnet-4.*": ModelPrice(3.0, 15.0),
+    # Fast-варианты Opus тарифицируются по повышенной ставке — проверяем раньше generic паттерна.
+    r".*claude-opus-4.*-fast.*": ModelPrice(30.0, 150.0),
+    r".*claude-opus-4.*": ModelPrice(5.0, 25.0),
     # Catch-all fake-model для тестов (zero cost)
     r"^fake-model$": ModelPrice(0.0, 0.0),
 }

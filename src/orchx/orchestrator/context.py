@@ -1,6 +1,6 @@
 """State-классы оркестратора.
 
-Выделены из ``orchx.orchestrator.core`` (P0.1, см. docs/recommendations.md).
+Выделены из ``orchx.orchestrator.core`` (P0.1).
 Эти классы — фактически runtime-state pre/post одного прогона роя.
 
 Public API (стабильный):

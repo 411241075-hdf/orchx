@@ -1,6 +1,6 @@
 """Append-only журнал прогона (orchX-log).
 
-Выделено из ``orchx.orchestrator.core`` (P0.1, см. docs/recommendations.md).
+Выделено из ``orchx.orchestrator.core`` (P0.1).
 """
 
 from __future__ import annotations

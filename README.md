@@ -16,8 +16,7 @@ Headless мультиагентный рой для git-проектов: дек
 [**Quickstart**](#quickstart) ·
 [**Что внутри**](#что-внутри) ·
 [**Плагины**](#плагины) ·
-[**Документация**](#документация) ·
-[**Сравнение**](docs/comparison.md)
+[**Документация**](#документация)
 
 </div>
 
@@ -163,8 +162,6 @@ reactions:
 | [`docs/internals.md`](docs/internals.md)             | Низкоуровневые подробности (планер, replan, merger, reviewer pipeline) |
 | [`docs/contributing.md`](docs/contributing.md)       | Как добавить плагин / tool / тест                                      |
 | [`docs/changelog.md`](docs/changelog.md)             | Подробный список изменений по версиям                                  |
-| [`docs/comparison.md`](docs/comparison.md)           | Сравнение с OpenHands, Ruflo, ComposioHQ/agent-orchestrator            |
-| [`docs/recommendations.md`](docs/recommendations.md) | Roadmap, по которому шла работа над 0.2                                |
 | [`docs/recipes/`](docs/recipes)                      | Готовые конфиги: Slack-нотификации, Docker-runtime, memory-RAG         |
 | [`examples/`](examples)                              | Hello-world, with-dashboard, with-docker-runtime, with-mcp-server      |
 
@@ -203,7 +200,7 @@ reactions:
 orchX — единственный, у кого есть формализованный declarative `plan.json`
 
 - PHASED checkpoints + auto-replan + 3-state verifier reviewer **в
-  батчевом headless CLI**. Подробный сравнительный анализ — [`docs/comparison.md`](docs/comparison.md).
+  батчевом headless CLI**.
 
 ## Лицензия
 

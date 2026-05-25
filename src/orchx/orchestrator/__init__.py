@@ -1,7 +1,7 @@
 """Главный оркестратор роя orchX — пакетный фасад.
 
 Пакет разбит на сегменты для уменьшения cognitive bloat (исходный
-``orchestrator.py`` был 2671 строк, см. P0.1 в docs/recommendations.md):
+``orchestrator.py`` был 2671 строк, см. P0.1):
 
 * :mod:`orchx.orchestrator.context` — dataclass'ы состояния
   (``OrchXConfig``, ``OrchXContext``, ``TaskState``, ``PhaseState``,

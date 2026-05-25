@@ -2,8 +2,7 @@
 
 .. note::
 
-   P0.1 (см. ``docs/recommendations.md``): этот модуль постепенно
-   расщепляется. Уже вынесены:
+   P0.1: этот модуль постепенно расщепляется. Уже вынесены:
 
    * :mod:`orchx.orchestrator.context` — state dataclasses.
    * :mod:`orchx.orchestrator.logging_utils` — append-only журнал.
