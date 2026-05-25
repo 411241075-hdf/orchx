@@ -108,7 +108,11 @@ def load_plugin(slot: str, name: str, *, config: dict[str, Any] | None = None) -
     )
 
 
-def load_from_config(config_path: Path | str) -> dict[str, Any]:
+def load_from_config(
+    config_path: Path | str,
+    *,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
     """Прочитать ``.orchx/config.yaml`` и загрузить все объявленные plugin'ы.
 
     Возвращает dict:
@@ -124,12 +128,34 @@ def load_from_config(config_path: Path | str) -> dict[str, Any]:
        }
 
     Любой ключ может отсутствовать (тогда оркестратор использует fallback).
-    Если файл вообще не существует — возвращается пустой dict (полностью
-    legacy режим).
+    Если файл вообще не существует — применяются дефолты (memory: sqlite).
+
+    Args:
+        config_path: путь к ``.orchx/config.yaml`` (может не существовать).
+        repo_root: корень репо. Если задан, относительные пути в конфиге
+            (например, ``path: .orchx/memory.db`` для sqlite-memory)
+            резолвятся относительно него. Если не задан — относительные
+            пути остаются относительными к ``cwd``.
     """
     p = Path(config_path)
+    repo_root = Path(repo_root).resolve() if repo_root else None
+
+    def _default_memory_cfg() -> dict[str, Any]:
+        if repo_root is None:
+            return {}
+        return {"path": str(repo_root / ".orchx" / "memory.db")}
+
     if not p.exists():
-        return {}
+        # Без config.yaml применяем дефолты: memory=sqlite (включено по
+        # умолчанию начиная с 0.2.1).
+        try:
+            return {
+                "memory": load_plugin(
+                    "memory", "sqlite", config=_default_memory_cfg()
+                )
+            }
+        except Exception:  # noqa: BLE001
+            return {}
     try:
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
@@ -146,10 +172,24 @@ def load_from_config(config_path: Path | str) -> dict[str, Any]:
         ("scm", "scm"),
         ("memory", "memory"),
     ):
-        name = raw.get(key)
+        # Дефолты: memory → sqlite (если ключа нет вообще), остальные —
+        # off (None). Чтобы явно отключить memory, в config.yaml пишут
+        # ``memory: noop`` или ``memory: null``.
+        if key == "memory":
+            name = raw.get(key) if key in raw else "sqlite"
+        else:
+            name = raw.get(key)
         if not name:
             continue
         cfg = plugin_configs.get(name, {}) or {}
+        # Для memory резолвим relative path относительно repo_root.
+        if (
+            key == "memory"
+            and name == "sqlite"
+            and repo_root is not None
+            and "path" not in cfg
+        ):
+            cfg = {**cfg, "path": str(repo_root / ".orchx" / "memory.db")}
         result[key] = load_plugin(slot_singular, name, config=cfg)
 
     notifier_names = raw.get("notifiers", []) or []

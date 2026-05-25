@@ -2407,6 +2407,7 @@ async def run_orchX(
     if plugins:
         ctx.runtime = plugins.get("runtime") or ctx.runtime
         ctx.memory = plugins.get("memory") or ctx.memory
+        ctx.tracker = plugins.get("tracker") or ctx.tracker
         notifiers = plugins.get("notifiers") or []
         if notifiers:
             # Compose multiple notifiers в одну fan-out обёртку.
@@ -2427,6 +2428,17 @@ async def run_orchX(
             )
         except Exception:  # noqa: BLE001
             logger.warning("notifier run_started failed", exc_info=True)
+
+    # 0.2.1: tracker update — отметим задачу как «в работе».
+    if ctx.tracker is not None:
+        try:
+            await ctx.tracker.update_status(
+                ctx.plan.task_id,
+                "running",
+                f"orchX run started — integration: `{ctx.integration_branch}`",
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("tracker update_status(running) failed", exc_info=True)
 
     if on_ctx_ready is not None:
         # Сигнал внешнему наблюдателю (CLI/TUI), что контекст создан и можно
@@ -2562,6 +2574,34 @@ async def run_orchX(
             )
         except Exception:  # noqa: BLE001
             logger.warning("notifier run_finished failed", exc_info=True)
+
+    # 0.2.1: tracker — обновить статус задачи (done / failed).
+    if ctx.tracker is not None:
+        counts = summary.get("counts", {})
+        all_ok = (
+            not ctx.aborted
+            and counts.get("failed", 0) == 0
+            and counts.get("success", 0) > 0
+        )
+        tracker_status = "done" if all_ok else "failed"
+        details_parts: list[str] = [
+            f"orchX finished — success={counts.get('success', 0)} "
+            f"failed={counts.get('failed', 0)} "
+            f"skipped={counts.get('skipped', 0)}",
+            f"Cost: ${round(ctx.total_cost_usd, 4)}",
+        ]
+        if halt_reason:
+            details_parts.append(f"Halt: {halt_reason}")
+        try:
+            await ctx.tracker.update_status(
+                ctx.plan.task_id,
+                tracker_status,
+                "\n".join(details_parts),
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "tracker update_status(%s) failed", tracker_status, exc_info=True
+            )
 
     # P0.3 / P2.4: записать результаты в memory plugin (если включён).
     await _record_run_to_memory(ctx, summary)

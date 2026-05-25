@@ -810,7 +810,10 @@ async def _cmd_run(args: argparse.Namespace) -> int:
     # P0.2 / P1.5: загрузка плагинов из .orchx/config.yaml.
     from .plugins import load_from_config
 
-    plugins_bag = load_from_config(repo_root / ".orchx" / "config.yaml")
+    plugins_bag = load_from_config(
+        repo_root / ".orchx" / "config.yaml",
+        repo_root=repo_root,
+    )
 
     try:
         try:
@@ -1069,7 +1072,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="P0.2: управление plugin-системой (list / info).",
     )
     plugins_sub = plugins_p.add_subparsers(dest="plugins_cmd", required=True)
-    plugins_sub.add_parser("list", help="Список всех зарегистрированных plugin'ов.")
+    plugins_sub.add_parser("list", help="Список всех зарегистрированных plugin'ov.")
+
+    tasks_p = sub.add_parser(
+        "tasks",
+        help=(
+            "Работа с tracker-задачами (GitHub Projects и т.п.): "
+            "ready / pick / move."
+        ),
+    )
+    tasks_sub = tasks_p.add_subparsers(dest="tasks_cmd", required=True)
+    ready_sp = tasks_sub.add_parser(
+        "ready", help="Список задач в колонке 'готово к работе'."
+    )
+    ready_sp.add_argument(
+        "--limit", type=int, default=20, help="Сколько задач вывести (default 20)."
+    )
+    tasks_sub.add_parser(
+        "pick",
+        help=(
+            "Атомарно забрать следующую задачу из Ready (переместит её в "
+            "In Progress) и напечатать тело."
+        ),
+    )
+    move_sp = tasks_sub.add_parser(
+        "move", help="Передвинуть задачу в указанную колонку."
+    )
+    move_sp.add_argument("task_id", help="Composite task id (см. `orchx tasks ready`).")
+    move_sp.add_argument(
+        "column", help='Имя целевой колонки (например, "In Progress").'
+    )
 
     dash_p = sub.add_parser(
         "dashboard",
@@ -1280,7 +1312,7 @@ async def _cmd_watch(args: argparse.Namespace) -> int:
     from .pr_watcher import DEFAULT_REACTIONS, parse_reactions_yaml, watch_pr
 
     config_path = repo_root / ".orchx" / "config.yaml"
-    plugin_bag = load_from_config(config_path)
+    plugin_bag = load_from_config(config_path, repo_root=repo_root)
     scm = plugin_bag.get("scm") or load_plugin("scm", "github")
     notifiers = plugin_bag.get("notifiers") or []
     notifier = notifiers[0] if notifiers else None
@@ -1371,6 +1403,101 @@ async def _cmd_plugins(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_tasks(args: argparse.Namespace) -> int:
+    """0.2.1: работа с tracker-задачами (GitHub Projects и т.п.).
+
+    Подкоманды:
+
+    * ``orchx tasks ready`` — список задач в Ready колонке.
+    * ``orchx tasks pick``  — атомарно забрать первую задачу из Ready
+      (переместит в In Progress) и напечатать её как ``orchx all``-prompt.
+    * ``orchx tasks move <id> <column>`` — передвинуть карточку.
+    """
+    repo_root = _detect_repo_root()
+    from .plugins import load_from_config
+
+    plugin_bag = load_from_config(
+        repo_root / ".orchx" / "config.yaml", repo_root=repo_root
+    )
+    tracker = plugin_bag.get("tracker")
+    if tracker is None:
+        tui.print_error(
+            "tracker plugin is not configured. Add `tracker: github-projects` "
+            "(or another tracker) to .orchx/config.yaml."
+        )
+        return 2
+
+    sub = getattr(args, "tasks_cmd", None)
+    if sub == "ready":
+        if not hasattr(tracker, "list_ready_tasks"):
+            tui.print_error(
+                f"tracker {type(tracker).__name__} does not support Kanban API "
+                "(list_ready_tasks)."
+            )
+            return 2
+        try:
+            tasks = await tracker.list_ready_tasks(limit=args.limit)
+        except Exception as e:  # noqa: BLE001
+            tui.print_error(f"list_ready_tasks failed: {e}")
+            return 1
+        tui.banner(f"orchX tasks: {len(tasks)} ready")
+        if not tasks:
+            tui.out("  (Ready column is empty)")
+            return 0
+        for t in tasks:
+            tui.out(f"  • [{t.id}] {t.title}")
+            if t.url:
+                tui.print_dim(f"      {t.url}")
+        return 0
+
+    if sub == "pick":
+        if not hasattr(tracker, "pick_next_ready_task"):
+            tui.print_error(
+                f"tracker {type(tracker).__name__} does not support Kanban API "
+                "(pick_next_ready_task)."
+            )
+            return 2
+        try:
+            task = await tracker.pick_next_ready_task()
+        except Exception as e:  # noqa: BLE001
+            tui.print_error(f"pick_next_ready_task failed: {e}")
+            return 1
+        if task is None:
+            tui.print_dim("Ready column is empty — nothing to pick.")
+            return 0
+        tui.banner(f"orchX task picked: {task.id}")
+        tui.out(f"Title: {task.title}")
+        if task.url:
+            tui.print_dim(f"URL:   {task.url}")
+        tui.out("")
+        tui.out("--- task body ---")
+        tui.out(task.body or "(empty)")
+        tui.out("")
+        tui.print_dim(
+            f'Next: orchx all "{task.title}"  '
+            f"(или передайте task.body как prompt)"
+        )
+        return 0
+
+    if sub == "move":
+        if not hasattr(tracker, "move_task"):
+            tui.print_error(
+                f"tracker {type(tracker).__name__} does not support Kanban API "
+                "(move_task)."
+            )
+            return 2
+        try:
+            await tracker.move_task(args.task_id, args.column)
+        except Exception as e:  # noqa: BLE001
+            tui.print_error(f"move_task failed: {e}")
+            return 1
+        tui.print_done("moved", f"{args.task_id} → {args.column}")
+        return 0
+
+    tui.print_error(f"unknown tasks subcommand: {sub!r}")
+    return 2
+
+
 def _latest_task_id(repo_root: Path) -> str | None:
     """Утилита: вернуть task_id самого свежего run'а в orchx/runs/."""
     runs_dir = paths.runs_dir(repo_root)
@@ -1402,6 +1529,7 @@ def main(argv: list[str] | None = None) -> int:
         "watch": _cmd_watch,
         "plugins": _cmd_plugins,
         "dashboard": _cmd_dashboard,
+        "tasks": _cmd_tasks,
     }[args.cmd]
     try:
         return asyncio.run(handler(args))

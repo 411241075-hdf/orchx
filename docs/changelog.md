@@ -4,6 +4,61 @@ All notable changes to **orchX** are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/) (pre-1.0 — minor может ломать API).
 
+## [0.2.1] — 2026-05-25
+
+### Added
+
+- **Memory: SQLite включён по умолчанию.** При отсутствии `.orchx/config.yaml`
+  (или явного `memory:` ключа в нём) `load_from_config` создаёт
+  `SqliteMemory` с `path=<repo_root>/.orchx/memory.db`. Чтобы выключить —
+  пропишите `memory: noop` в config.yaml.
+- **GitHub Projects v2 tracker** (`tracker: github-projects`): Kanban-workflow
+  через `gh api graphql` — `list_ready_tasks`, `pick_next_ready_task`
+  (атомарно перемещает в In Progress), `move_task`. По умолчанию
+  выключен — нужно явно прописать в config.yaml + указать
+  `project_owner`/`project_number`.
+- **CLI `orchx tasks`** — подкоманды `ready`/`pick`/`move` для работы
+  с tracker-задачами.
+- **Tracker подключён в orchestrator**: на старте run'а вызывается
+  `update_status(task_id, "running")`, на финише — `"done"` или
+  `"failed"` (плюс комментарий со счётчиками и cost).
+- **`KanbanTrackerPlugin` Protocol** (расширение `TrackerPlugin`) —
+  отдельный `@runtime_checkable` Protocol для трекеров с Kanban API
+  (`hasattr`-friendly fallback для трекеров без Kanban).
+- **Template `.orchx/config.yaml`** — копируется при `orchx init` с
+  закомментированными примерами всех плагинов.
+
+### Fixed (mypy / lint clean-up)
+
+- **Критический баг**: `_invoke_runtime() got an unexpected keyword
+  argument 'repo_root'` (4 вызова в `orchestrator/core.py`) блокировал
+  любой реальный `orchx run`. Добавлен kw-only `repo_root` параметр.
+- **`plugins/registry.py`**: `EntryPoints has no attribute 'get'` —
+  корректная feature-detection между `select(group=...)` и `.get(...)`.
+- **`Tool.run` signature** — базовая сигнатура изменена на
+  `(ctx, /, *args, **kwargs)` чтобы Liskov-совместимо принимать
+  keyword-only сигнатуры subclass'ов (11 tool-классов).
+- **`runtimes/local.py`**: `timeout_s` float → int приведение.
+- **`agent/_docker_entry.py`**: `LLMClient(config=)` → `LLMClient(cfg)`.
+- **7 unused `# type: ignore`** удалены.
+- mypy теперь **clean** (33 → 0 errors).
+
+### Changed (UX)
+
+- **`orchx --version` / `-V`** — печатает `orchX <version>` из
+  `importlib.metadata`.
+- **Автодетект `base_branch`** — если planner написал ветку, которой
+  нет в репо (типичная история `main` vs `master`), CLI находит реальную
+  через `origin/HEAD` → `main` → `master` → текущая.
+- **`orchx watch` без `-v`** — INFO-логи `orchx.pr_watcher` идут в
+  stderr (раньше были только при `-v`).
+- **macOS Sequoia + Python 3.14 fix** — `make install` теперь автоматически
+  снимает `UF_HIDDEN` флаг с pip-созданных `.pth` файлов через
+  `_fix-macos-hidden-pth` target.
+- **`load_from_config(config_path, repo_root=...)`** — новый kwarg, нужен
+  чтобы относительные пути в config.yaml (sqlite-memory `.orchx/memory.db`)
+  резолвились относительно репо, а не cwd.
+
 ## [0.2.0] — 2026-05-25
 
 Большой релиз по roadmap'у из [`docs/recommendations.md`](./recommendations.md).

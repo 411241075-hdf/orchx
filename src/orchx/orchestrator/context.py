@@ -229,3 +229,8 @@ class OrchXContext:
     runtime: Any | None = None
     """Опциональный :class:`orchx.plugins.contracts.RuntimePlugin`. По
     умолчанию None ⇒ legacy-путь через ``orchx.runner``."""
+    # 0.2.1: tracker plugin (issue tracker / GitHub Projects).
+    tracker: Any | None = None
+    """Опциональный :class:`orchx.plugins.contracts.TrackerPlugin` —
+    issue tracker. Если задан, orchestrator зовёт ``update_status`` на
+    важных событиях (run start, task done, run failed)."""

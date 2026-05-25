@@ -38,20 +38,24 @@ Or через high-level helper:
 from __future__ import annotations
 
 from .contracts import (
+    KanbanTrackerPlugin,
     MemoryPlugin,
     NotifierPlugin,
     RuntimePlugin,
     SCMPlugin,
+    TaskHandle,
     TrackerPlugin,
     WorkerOutcomeLike,
 )
 from .registry import load_from_config, load_plugin, registered_plugins
 
 __all__ = [
+    "KanbanTrackerPlugin",
     "MemoryPlugin",
     "NotifierPlugin",
     "RuntimePlugin",
     "SCMPlugin",
+    "TaskHandle",
     "TrackerPlugin",
     "WorkerOutcomeLike",
     "load_from_config",

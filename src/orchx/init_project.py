@@ -127,14 +127,14 @@ def init_project(
 
     templates = _package_templates_dir()
 
-    # 1. Корневые файлы: .env.example, PROJECT.md, README.md.
-    for entry in ("env.example", "PROJECT.md", "README.md"):
+    # 1. Корневые файлы: .env.example, PROJECT.md, README.md, config.yaml.
+    for entry in ("env.example", "PROJECT.md", "README.md", "config.yaml"):
         src = templates / entry
         if not src.exists():
             continue
         # env.example лежит в шаблонах под обычным именем — но в .orchx/
         # его принято класть как .env.example (со скрытой точкой). Имя
-        # PROJECT.md/README.md оставляем как есть.
+        # PROJECT.md/README.md/config.yaml оставляем как есть.
         target_name = ".env.example" if entry == "env.example" else entry
         _copy_file(src, runtime_dir / target_name, force=force, report=report)
 

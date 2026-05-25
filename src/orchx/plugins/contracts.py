@@ -92,12 +92,47 @@ class RuntimePlugin(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class TaskHandle(Protocol):
+    """Хэндл задачи в трекере (минимальный полезный набор полей).
+
+    Реализации трекеров возвращают этот duck-typed объект из
+    ``pick_next_ready_task`` / ``list_ready_tasks``.
+    """
+
+    id: str
+    """ID задачи в трекере (issue number, project item id, и т.п.).
+
+    Формат tracker-specific:
+    * GitHub Issues: номер issue (например, ``"123"``).
+    * GitHub Projects: ``"<project_item_id>:<issue_number>"`` —
+      composite, чтобы можно было двигать колонку и комментировать issue.
+    """
+
+    title: str
+    body: str
+    url: str | None
+    """Ссылка на задачу (если применимо)."""
+
+
 @runtime_checkable
 class TrackerPlugin(Protocol):
     """Issue-tracker, откуда задачи приходят и куда статусы отправляются.
 
-    По умолчанию — :class:`orchx.plugins.trackers.github.GithubTracker`
-    (использует ``gh`` CLI). Альтернативы — linear / jira / gitlab / …
+    Дефолтные реализации:
+
+    * :class:`orchx.plugins.trackers.github.GithubTracker` — GitHub Issues
+      через ``gh`` CLI (минимальный набор: fetch + comment).
+    * :class:`orchx.plugins.trackers.github_projects.GithubProjectsTracker` —
+      GitHub Projects v2 с поддержкой канбана: pick from Ready, move to
+      In Progress / Done, обновление кастомных полей.
+
+    По умолчанию **выключен** (в :func:`orchx.plugins.registry.load_from_config`
+    нет дефолтной подстановки) — нужно явно прописать ``tracker: <name>`` в
+    ``.orchx/config.yaml``.
+
+    Минимальный контракт — две async-функции ``fetch_task_description`` и
+    ``update_status``. Расширенный Kanban-контракт — см.
+    :class:`KanbanTrackerPlugin` (отдельный Protocol).
     """
 
     async def fetch_task_description(self, task_id: str) -> str | None:
@@ -119,6 +154,44 @@ class TrackerPlugin(Protocol):
         Args:
             status: одно из ``running`` | ``done`` | ``failed`` | ``replanned``.
             details: дополнительная информация (PR-link, error message).
+        """
+        ...
+
+
+@runtime_checkable
+class KanbanTrackerPlugin(TrackerPlugin, Protocol):
+    """Расширение :class:`TrackerPlugin` для трекеров, поддерживающих
+    канбан-workflow (GitHub Projects v2, Jira, Linear, …).
+
+    Опциональный Protocol — если ваш трекер его не реализует, CLI/orchestrator
+    делают graceful fallback (через ``hasattr``).
+    """
+
+    async def list_ready_tasks(self, limit: int = 20) -> list[TaskHandle]:
+        """Список задач в колонке "готово к работе".
+
+        Используется CLI ``orchx tasks ready``. Реализация определяет
+        что такое "готово к работе" (метка, колонка в Projects, статус).
+        """
+        ...
+
+    async def pick_next_ready_task(self) -> TaskHandle | None:
+        """Взять следующую задачу из Ready и сразу пометить её как
+        "in progress" (атомарная операция, чтобы избежать гонок между
+        агентами).
+
+        Returns:
+            :class:`TaskHandle` если задача взята, ``None`` если очередь пуста.
+        """
+        ...
+
+    async def move_task(self, task_id: str, column: str) -> None:
+        """Передвинуть задачу в указанную колонку канбана.
+
+        Args:
+            task_id: ID задачи (как возвращает ``TaskHandle.id``).
+            column: имя целевой колонки (``Ready`` / ``In Progress`` /
+                ``Done`` / любое из настроенных в проекте).
         """
         ...
 

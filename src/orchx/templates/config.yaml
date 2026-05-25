@@ -1,0 +1,103 @@
+# orchX runtime configuration.
+#
+# Все ключи опциональны. Этот файл — дефолтная конфигурация плагинов
+# для вашего проекта; commit-ните его в репо, чтобы у всей команды
+# был один и тот же поведенческий контракт.
+#
+# Полный список доступных плагинов: `orchx plugins list`.
+# Контракты и поля: src/orchx/plugins/contracts.py.
+
+# ------------------------------------------------------------------
+# Memory plugin — долговременная память роя (RAG для planner/debugger).
+# По умолчанию включён `sqlite` (`.orchx/memory.db`). Чтобы выключить:
+# раскомментируйте строку `memory: noop` ниже.
+# ------------------------------------------------------------------
+memory: sqlite
+# memory: noop  # явно выключить долговременную память
+
+# ------------------------------------------------------------------
+# Tracker plugin — issue tracker / GitHub Projects.
+# По умолчанию выключен. Если включить — orchX сможет брать задачи из
+# Ready колонки, двигать их по канбану, оставлять комментарии о прогрессе.
+#
+# Простой github (Issues only):
+#   tracker: github
+#
+# GitHub Projects v2 (Kanban + custom fields + статусы):
+#   tracker: github-projects
+# ------------------------------------------------------------------
+# tracker: github-projects
+
+# ------------------------------------------------------------------
+# Runtime — где запускаются воркеры. Default: local (asyncio + git worktree).
+# Альтернативы: docker (sandboxed; требует `orchx-worker:latest` image).
+# ------------------------------------------------------------------
+# runtime: local
+
+# ------------------------------------------------------------------
+# SCM — где живут ветки и PR'ы. Default: github (через `gh` CLI).
+# ------------------------------------------------------------------
+# scm: github
+
+# ------------------------------------------------------------------
+# Notifiers — куда отправлять события (run_started, pr_opened, cost_alert,
+# ci_failed, и т.п.). Можно указать несколько — события будут fan-out'иться
+# в каждый из них.
+# ------------------------------------------------------------------
+# notifiers:
+#   - slack
+#   - discord
+
+# ------------------------------------------------------------------
+# PR feedback loop reactions — поведение `orchx watch <task_id>`.
+# По умолчанию: CI failure → debugger, change-request → implementer,
+# approved-and-green → notify.
+# ------------------------------------------------------------------
+# reactions:
+#   ci_failed:
+#     auto: true
+#     action: send-to-debugger
+#     max_retries: 3
+#   changes_requested:
+#     auto: true
+#     action: send-to-implementer
+#     max_retries: 3
+#   approved_and_green:
+#     auto: false
+#     action: notify   # | auto-merge
+
+# ------------------------------------------------------------------
+# Plugin-specific config (передаётся в конструктор каждого плагина
+# как **kwargs).
+# ------------------------------------------------------------------
+plugin_config:
+  sqlite:
+    path: .orchx/memory.db
+    # Опционально: embeddings для семантического recall (по умолчанию FTS5-only).
+    # embed_endpoint: ${ORCHX_LLM_BASE_URL}/v1/embeddings
+    # embed_model: text-embedding-3-small
+    # embed_api_key: ${ORCHX_LLM_API_KEY}
+
+  github-projects:
+    # owner/repo (или ORG имя для org-level projects). Если не задан —
+    # резолвится из текущего git remote.
+    # owner_repo: my-org/my-repo
+    # Номер проекта (Projects v2) в GitHub. См. URL проекта:
+    # https://github.com/orgs/<org>/projects/<NUMBER> или
+    # https://github.com/users/<user>/projects/<NUMBER>.
+    # project_number: 1
+    # Имя поля статуса (по умолчанию "Status").
+    # status_field: Status
+    # Имя колонки/опции "готово к работе" (по умолчанию "Ready").
+    # ready_column: Ready
+    # Имя колонки "в работе" (по умолчанию "In progress" — стандарт GitHub).
+    # in_progress_column: In progress
+    # Имя колонки "сделано" (по умолчанию "Done").
+    # done_column: Done
+
+  slack:
+    # webhook_url: ${SLACK_WEBHOOK_URL}
+    # channel: "#orchx"
+
+  discord:
+    # webhook_url: ${DISCORD_WEBHOOK_URL}

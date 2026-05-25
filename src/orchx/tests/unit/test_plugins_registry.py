@@ -99,9 +99,21 @@ memory: noop
     assert "memory" in bag and isinstance(bag["memory"], MemoryPlugin)
 
 
-def test_load_from_missing_config_returns_empty():
+def test_load_from_missing_config_returns_memory_default():
+    """С 0.2.1 memory: sqlite — дефолт, даже без config.yaml."""
     bag = load_from_config(Path("/does/not/exist.yaml"))
-    assert bag == {}
+    assert "memory" in bag
+    assert isinstance(bag["memory"], MemoryPlugin)
+
+
+def test_load_from_missing_config_with_disabled_memory(tmp_path: Path):
+    """Можно явно выключить дефолт через `memory: noop` в config."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("memory: noop\n", encoding="utf-8")
+    bag = load_from_config(cfg)
+    # NoopMemory создаётся — это не пустой dict, но и не sqlite.
+    assert "memory" in bag
+    assert type(bag["memory"]).__name__ == "NoopMemory"
 
 
 def test_load_from_invalid_yaml_raises(tmp_path: Path):

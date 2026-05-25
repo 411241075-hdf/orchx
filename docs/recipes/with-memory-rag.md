@@ -4,9 +4,15 @@
 > похожих задачах planner/debugger смогут опираться на исторический
 > контекст.
 
+> **С 0.2.1 memory: sqlite включён по умолчанию.** Если просто запустить
+> `orchx init` — `.orchx/memory.db` создастся автоматически после
+> первого `orchx run`. Этот recipe нужен только если хочется поменять
+> путь, отключить, или добавить embeddings.
+
 ## 1. Базовая настройка (только FTS, без embeddings)
 
-`.orchx/config.yaml`:
+Не нужно ничего делать — это **дефолт** с 0.2.1. Если хотите кастомный
+путь, в `.orchx/config.yaml`:
 
 ```yaml
 memory: sqlite
@@ -14,6 +20,12 @@ memory: sqlite
 plugin_config:
   sqlite:
     path: .orchx/memory.db
+```
+
+Чтобы **выключить**:
+
+```yaml
+memory: noop
 ```
 
 После каждого прогона orchX автоматически пишет:
