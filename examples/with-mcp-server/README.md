@@ -30,15 +30,16 @@ mcp_servers:
 permission:
   read: allow
   edit: allow
-  bash: {pytest: allow, npm: allow, "*": deny}
+  bash: { pytest: allow, npm: allow, "*": deny }
 ---
 
 You are orchX-implementer with GitHub MCP integration.
 Use tools like:
-- github__list_issues  (proxy to MCP github server)
-- github__create_issue
-- fs__read_file
-- fs__write_file
+
+- github\_\_list_issues (proxy to MCP github server)
+- github\_\_create_issue
+- fs\_\_read_file
+- fs\_\_write_file
 - (plus native: read, write, edit, glob, grep, bash)
 ```
 
@@ -56,6 +57,6 @@ Use tools like:
 
 ## Известные ограничения
 
-* Только **stdio**-транспорт сейчас (URL/SSE будет добавлен в будущем).
-* MCP-tools не gating'уются orchX permissions — гейтинг происходит
+- Только **stdio**-транспорт сейчас (URL/SSE будет добавлен в будущем).
+- MCP-tools не gating'уются orchX permissions — гейтинг происходит
   внутри самого MCP-сервера. Будьте осторожны с правами файловой системы / GitHub-token'а / etc.

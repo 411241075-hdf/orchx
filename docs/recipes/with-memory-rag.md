@@ -17,9 +17,10 @@ plugin_config:
 ```
 
 После каждого прогона orchX автоматически пишет:
-* `plans/<task_id>` — успешный план + counts + wall_seconds.
-* `failures/<task_id>` — если есть failed tasks.
-* `reviews/<task_id>` — review findings + verifier verdicts.
+
+- `plans/<task_id>` — успешный план + counts + wall_seconds.
+- `failures/<task_id>` — если есть failed tasks.
+- `reviews/<task_id>` — review findings + verifier verdicts.
 
 Использование:
 
@@ -80,9 +81,9 @@ print(f"forgot {deleted} old records")
 
 ## Что **планируется** (P3+)
 
-* Автоподмешивание recall в planner/debugger prompt'ы (сейчас orchX
+- Автоподмешивание recall в planner/debugger prompt'ы (сейчас orchX
   только пишет; явный recall — вручную через API).
-* Reinforcement signal: если прогон провалился — снизить score
+- Reinforcement signal: если прогон провалился — снизить score
   исторического pattern'а.
-* Pattern templates: planner может «достать» полный plan для похожей
+- Pattern templates: planner может «достать» полный plan для похожей
   задачи и адаптировать.

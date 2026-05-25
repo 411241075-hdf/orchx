@@ -54,27 +54,27 @@
 
 ## Core packages
 
-| Path | Что | Pluggable? |
-| ---- | --- | ---------- |
-| `src/orchx/orchestrator/` | Phased main loop, retry, merge, review, replan, supervisor, cost | — |
-| `src/orchx/plugins/` | Plugin-slot system: runtime/tracker/scm/notifier/memory | Да — extras |
-| `src/orchx/agent/` | LLM client, system prompts, tool implementations, permissions | tools — да |
-| `src/orchx/agent/tools/` | Read/Edit/Write/Bash/Search/Browser/MCP/Symbols/Task/Web | Регистр статичный |
-| `src/orchx/web/` | Optional dashboard + federation REST | Опц. extras `[server]` |
-| `src/orchx/pr_watcher.py` | CI/review polling + reactions | — |
-| `src/orchx/cost.py` | Per-model price table + estimator | — |
+| Path                      | Что                                                              | Pluggable?             |
+| ------------------------- | ---------------------------------------------------------------- | ---------------------- |
+| `src/orchx/orchestrator/` | Phased main loop, retry, merge, review, replan, supervisor, cost | —                      |
+| `src/orchx/plugins/`      | Plugin-slot system: runtime/tracker/scm/notifier/memory          | Да — extras            |
+| `src/orchx/agent/`        | LLM client, system prompts, tool implementations, permissions    | tools — да             |
+| `src/orchx/agent/tools/`  | Read/Edit/Write/Bash/Search/Browser/MCP/Symbols/Task/Web         | Регистр статичный      |
+| `src/orchx/web/`          | Optional dashboard + federation REST                             | Опц. extras `[server]` |
+| `src/orchx/pr_watcher.py` | CI/review polling + reactions                                    | —                      |
+| `src/orchx/cost.py`       | Per-model price table + estimator                                | —                      |
 
 ---
 
 ## Plugin slots (P0.2)
 
-| Slot | Контракт | Default | Альтернативы |
-| ---- | -------- | ------- | ------------ |
-| `runtime` | `RuntimePlugin.spawn_worker(...)` | `local` (asyncio + worktree) | `docker` (P1.2) |
-| `tracker` | `TrackerPlugin.fetch_task_description / update_status` | `github` (gh CLI) | linear/jira/gitlab → user |
-| `scm` | `SCMPlugin.push_branch / open_pr / get_pr_status` | `github` | gitlab/bitbucket → user |
-| `notifier` | `NotifierPlugin.notify(event, payload)` | `noop` | slack, discord, webhook, dashboard |
-| `memory` | `MemoryPlugin.remember / recall / forget_old` | `noop` | `sqlite` (FTS5 + optional embeddings) |
+| Slot       | Контракт                                               | Default                      | Альтернативы                          |
+| ---------- | ------------------------------------------------------ | ---------------------------- | ------------------------------------- |
+| `runtime`  | `RuntimePlugin.spawn_worker(...)`                      | `local` (asyncio + worktree) | `docker` (P1.2)                       |
+| `tracker`  | `TrackerPlugin.fetch_task_description / update_status` | `github` (gh CLI)            | linear/jira/gitlab → user             |
+| `scm`      | `SCMPlugin.push_branch / open_pr / get_pr_status`      | `github`                     | gitlab/bitbucket → user               |
+| `notifier` | `NotifierPlugin.notify(event, payload)`                | `noop`                       | slack, discord, webhook, dashboard    |
+| `memory`   | `MemoryPlugin.remember / recall / forget_old`          | `noop`                       | `sqlite` (FTS5 + optional embeddings) |
 
 Сторонние пакеты добавляют плагины через
 [`importlib.metadata` entry-points](https://packaging.python.org/en/latest/specifications/entry-points/):
@@ -107,9 +107,9 @@ plugin_config:
     embed_model: text-embedding-3-small
 
 reactions:
-  ci_failed: {auto: true, action: send-to-debugger, max_retries: 3}
-  changes_requested: {auto: true, action: send-to-implementer}
-  approved_and_green: {auto: false, action: notify}
+  ci_failed: { auto: true, action: send-to-debugger, max_retries: 3 }
+  changes_requested: { auto: true, action: send-to-implementer }
+  approved_and_green: { auto: false, action: notify }
 ```
 
 ---
@@ -119,32 +119,32 @@ reactions:
 Каждый significant event в orchestrator'е публикуется через `ctx.notifier.notify(...)`.
 Подписаны: внешние notifier'ы (Slack/Discord/Webhook) + web dashboard SSE-канал.
 
-| Event | Когда | Payload (примерно) |
-| ----- | ----- | ------------------ |
-| `run_started` | в начале `run_orchX` | task_id, phases, tasks |
-| `phase_completed` | фаза успешна | phase_id, duration |
-| `phase_failed` | фаза упала | phase_id, reasons |
-| `replan_triggered` | вызван orchX-planner для recovery | replan_count |
-| `pr_opened` | gh pr create | pr_url, marker |
-| `cost_alert` | пересечён порог 50/75/90% бюджета | threshold_pct, total_usd |
-| `budget_exceeded` | supervisor abort'нул по cost | total_usd, budget_usd |
-| `wall_budget_exceeded` | supervisor abort'нул по wall-time | elapsed_s |
-| `ci_failed` | pr_watcher увидел CI failure | retry, pr_url |
-| `changes_requested` | reviewer запросил изменения | comments_count, pr_url |
-| `approved_and_green` | PR approved + CI green | auto_merge |
-| `auto_fixup_planned` | reviewer findings → debugger tasks | count, plan_path |
-| `run_finished` | orchx done | counts, total_cost_usd, halt_reason |
+| Event                  | Когда                              | Payload (примерно)                  |
+| ---------------------- | ---------------------------------- | ----------------------------------- |
+| `run_started`          | в начале `run_orchX`               | task_id, phases, tasks              |
+| `phase_completed`      | фаза успешна                       | phase_id, duration                  |
+| `phase_failed`         | фаза упала                         | phase_id, reasons                   |
+| `replan_triggered`     | вызван orchX-planner для recovery  | replan_count                        |
+| `pr_opened`            | gh pr create                       | pr_url, marker                      |
+| `cost_alert`           | пересечён порог 50/75/90% бюджета  | threshold_pct, total_usd            |
+| `budget_exceeded`      | supervisor abort'нул по cost       | total_usd, budget_usd               |
+| `wall_budget_exceeded` | supervisor abort'нул по wall-time  | elapsed_s                           |
+| `ci_failed`            | pr_watcher увидел CI failure       | retry, pr_url                       |
+| `changes_requested`    | reviewer запросил изменения        | comments_count, pr_url              |
+| `approved_and_green`   | PR approved + CI green             | auto_merge                          |
+| `auto_fixup_planned`   | reviewer findings → debugger tasks | count, plan_path                    |
+| `run_finished`         | orchx done                         | counts, total_cost_usd, halt_reason |
 
 ---
 
 ## Memory namespaces (P0.3 / P2.4)
 
-| Namespace | Что хранится | Кто пишет | Кто читает |
-| --------- | ------------ | --------- | ---------- |
-| `plans` | task_id + summary успешного прогона | orchestrator (run end) | planner (recall похожих) |
-| `failures` | failed-tasks + reason | orchestrator (run end) | planner / debugger |
-| `fixes` | (резерв) успешный debugger fix | orchestrator (резерв, v2) | debugger |
-| `reviews` | review findings + verdicts | orchestrator (если ran reviewer) | reviewer (self-improvement) |
+| Namespace  | Что хранится                        | Кто пишет                        | Кто читает                  |
+| ---------- | ----------------------------------- | -------------------------------- | --------------------------- |
+| `plans`    | task_id + summary успешного прогона | orchestrator (run end)           | planner (recall похожих)    |
+| `failures` | failed-tasks + reason               | orchestrator (run end)           | planner / debugger          |
+| `fixes`    | (резерв) успешный debugger fix      | orchestrator (резерв, v2)        | debugger                    |
+| `reviews`  | review findings + verdicts          | orchestrator (если ran reviewer) | reviewer (self-improvement) |
 
 `recall(namespace, query, k)` — semantic vector search через embeddings (если
 есть `embed_endpoint` в config) с FTS5 fallback.
@@ -153,31 +153,31 @@ reactions:
 
 ## Tools (worker)
 
-| Tool | Permission | Notes |
-| ---- | ---------- | ----- |
-| `read` | `read` | Read files |
-| `write` / `edit` | `edit` (bool или glob-list) | Path-gated |
-| `glob` / `grep` / `codesearch` | `glob` / `grep` / `codesearch` | Read-only |
-| `bash` | `bash` (prefix allow-list + injection guard) | Prefix-extract + injection-block |
-| `webfetch` | `webfetch` | Anti-SSRF |
-| `task` | `task` | Sub-agent spawn |
-| `todowrite` | always | In-memory todos |
-| **`find_symbol`** (P1.6) | `lsp` | AST для Python, regex для JS/TS |
-| **`find_references`** (P1.6) | `lsp` | Word-boundary regex |
-| **`rename_symbol`** (P1.6) | `lsp` + per-file edit | Python AST only |
-| **`browser`** (P1.7) | `browser` | Playwright, sandbox localhost only by default |
-| **`<server>__<tool>`** (P1.1 MCP) | — (sandbox в MCP-сервере) | Префикс по name MCP-сервера |
+| Tool                              | Permission                                   | Notes                                         |
+| --------------------------------- | -------------------------------------------- | --------------------------------------------- |
+| `read`                            | `read`                                       | Read files                                    |
+| `write` / `edit`                  | `edit` (bool или glob-list)                  | Path-gated                                    |
+| `glob` / `grep` / `codesearch`    | `glob` / `grep` / `codesearch`               | Read-only                                     |
+| `bash`                            | `bash` (prefix allow-list + injection guard) | Prefix-extract + injection-block              |
+| `webfetch`                        | `webfetch`                                   | Anti-SSRF                                     |
+| `task`                            | `task`                                       | Sub-agent spawn                               |
+| `todowrite`                       | always                                       | In-memory todos                               |
+| **`find_symbol`** (P1.6)          | `lsp`                                        | AST для Python, regex для JS/TS               |
+| **`find_references`** (P1.6)      | `lsp`                                        | Word-boundary regex                           |
+| **`rename_symbol`** (P1.6)        | `lsp` + per-file edit                        | Python AST only                               |
+| **`browser`** (P1.7)              | `browser`                                    | Playwright, sandbox localhost only by default |
+| **`<server>__<tool>`** (P1.1 MCP) | — (sandbox в MCP-сервере)                    | Префикс по name MCP-сервера                   |
 
 ---
 
 ## Безопасность
 
-* **Bash**: prefix-extract (composite ``&&``/``;``/``|`` блокируется как injection) + per-role allow-list. См. `agent/permissions.py:BashRule`.
-* **Edit**: path-gated, sandbox строго внутри cwd worktree. Глобовые правила.
-* **WebFetch**: anti-SSRF (private IPs, loopback блокируются).
-* **Browser**: by-default `localhost:*` / `127.0.0.1:*` only.
-* **Docker runtime** (P1.2): `--network none --cap-drop=ALL --read-only` для repo mount.
-* **Federation** (P2.3): Bearer-token auth (`ORCHX_FEDERATION_TOKEN`) с
+- **Bash**: prefix-extract (composite `&&`/`;`/`|` блокируется как injection) + per-role allow-list. См. `agent/permissions.py:BashRule`.
+- **Edit**: path-gated, sandbox строго внутри cwd worktree. Глобовые правила.
+- **WebFetch**: anti-SSRF (private IPs, loopback блокируются).
+- **Browser**: by-default `localhost:*` / `127.0.0.1:*` only.
+- **Docker runtime** (P1.2): `--network none --cap-drop=ALL --read-only` для repo mount.
+- **Federation** (P2.3): Bearer-token auth (`ORCHX_FEDERATION_TOKEN`) с
   constant-time compare.
 
 ---

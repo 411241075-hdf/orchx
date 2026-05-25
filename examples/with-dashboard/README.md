@@ -32,8 +32,8 @@ orchx all "Add user registration form"
 
 В браузере на http://localhost:8421:
 
-* Таблица **Runs** обновляется каждые 10s (REST `/api/runs`).
-* Секция **Live events** показывает события от orchestrator в реальном
+- Таблица **Runs** обновляется каждые 10s (REST `/api/runs`).
+- Секция **Live events** показывает события от orchestrator в реальном
   времени (через `/api/events` SSE).
 
 ## Federation

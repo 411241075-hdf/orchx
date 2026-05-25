@@ -7,8 +7,8 @@
 [Slack docs](https://api.slack.com/messaging/webhooks):
 
 1. Откройте https://api.slack.com/apps → Create New App → From scratch.
-2. Включите *Incoming Webhooks*.
-3. *Add New Webhook to Workspace* → выберите канал → скопируйте URL
+2. Включите _Incoming Webhooks_.
+3. _Add New Webhook to Workspace_ → выберите канал → скопируйте URL
    (`https://hooks.slack.com/services/T.../B.../...`).
 
 ## 2. orchX config
@@ -28,7 +28,7 @@ plugin_config:
   slack:
     webhook_url: ${SLACK_WEBHOOK_URL}
     username: orchX
-    channel: "#dev-bots"  # опционально
+    channel: "#dev-bots" # опционально
 ```
 
 ## 3. Запустить
@@ -39,11 +39,11 @@ orchx all "Add OAuth login"
 
 Получаемые события:
 
-* `:rocket: orchX [run_started]` task_id, phases, tasks
-* `:white_check_mark: orchX [phase_completed]` phase_id, duration
-* `:pencil: orchX [pr_opened]` URL
-* `:warning: orchX [cost_alert]` 75% бюджета
-* `:checkered_flag: orchX [run_finished]` counts, total_cost_usd
+- `:rocket: orchX [run_started]` task_id, phases, tasks
+- `:white_check_mark: orchX [phase_completed]` phase_id, duration
+- `:pencil: orchX [pr_opened]` URL
+- `:warning: orchX [cost_alert]` 75% бюджета
+- `:checkered_flag: orchX [run_finished]` counts, total_cost_usd
 
 ## Несколько каналов
 
