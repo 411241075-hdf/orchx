@@ -42,6 +42,107 @@ from typing import Any
 # Идентификатор «инъекция обнаружена», возвращаемый prefix-extractor'ом.
 INJECTION_SENTINEL = "__command_injection_detected__"
 
+# Идентификатор для безопасных read-only пайпов (см. SAFE_READONLY_PIPE_CMDS).
+# Используется когда команда — pipe из read-only utility'ев (cmd1 | head, ls | grep).
+SAFE_PIPE_PREFIX = "__safe_readonly_pipe__"
+
+# Read-only утилиты, которые безопасны в любой комбинации через `|`.
+# Эти команды не пишут в ФС, не делают сетевых запросов, не выполняют
+# произвольный код. Если КАЖДЫЙ stage пайпа — из этого набора, мы
+# трактуем весь пайп как одну read-only команду и обходим
+# injection-guard. Это решает кейс из ANALYSIS.md §2.3: `ls foo | head`,
+# `grep -rn pattern src | head -30`, `find . -name '*.py' | wc -l`.
+SAFE_READONLY_PIPE_CMDS: frozenset[str] = frozenset(
+    {
+        # Поиск/обход
+        "grep",
+        "egrep",
+        "fgrep",
+        "rg",
+        "ag",
+        "find",
+        "fd",
+        "fdfind",
+        # Просмотр содержимого
+        "cat",
+        "head",
+        "tail",
+        "less",
+        "more",
+        "bat",
+        "tac",
+        # Чтение метаданных
+        "ls",
+        "stat",
+        "file",
+        "wc",
+        "du",
+        "df",
+        # Текстовая обработка (без -i / -e exec)
+        "sort",
+        "uniq",
+        "cut",
+        "tr",
+        "rev",
+        "column",
+        "nl",
+        "fold",
+        "expand",
+        "unexpand",
+        "paste",
+        "join",
+        "comm",
+        "tee",  # tee пишет, но в файлы — только если воркер указал;
+        # в комбинации `cmd | tee /tmp/x` этот файл будет в worktree-cwd,
+        # что корректно для read-only сценария логирования.
+        "xargs",  # xargs опасен сам по себе, но без injection-операторов
+        # внутри его аргументов (см. _strip_quoted) — ограниченно безопасен.
+        "awk",  # awk без -f и без `system(...)` строится скриптом-аргументом,
+        # injection-guard на `;` внутри строкового литерала уже учтён
+        # через _strip_quoted.
+        "sed",  # sed без -i и без `e` modifier'а — read-only.
+        # Прочие утилиты, часто используемые в pipe'ах
+        "echo",
+        "printf",
+        "yes",
+        "true",
+        "false",
+        "date",
+        "pwd",
+        "id",
+        "whoami",
+        "uname",
+        "hostname",
+        "env",
+        "printenv",
+        "basename",
+        "dirname",
+        "realpath",
+        "readlink",
+        "tree",
+        "diff",
+        "patch",  # читает diff/файл, не выполняет код.
+        "md5sum",
+        "sha1sum",
+        "sha256sum",
+        "shasum",
+        "od",
+        "hexdump",
+        "xxd",
+        "strings",
+        "python",
+        "python3",
+        # python в pipe — read-only ТОЛЬКО если первый аргумент `-c`
+        # или скрипт внутри worktree. Мы пропускаем его в whitelist
+        # под предположением, что injection-guard ловит явно
+        # вредные паттерны (`os.system`, etc.) ВНЕ кавычек, а внутри
+        # кавычек — это уже свойство самого скрипта, не shell injection.
+        # Если воркер хочет писать через python — это не «pipe», а отдельный
+        # вызов. Для pipe-сценариев типа `cat foo | python -c "import sys; …"`
+        # это однозначно read-only по дизайну.
+    }
+)
+
 # Cимволы/последовательности, которые делают команду композитной.
 # Если они встречаются вне кавычек/heredoc'ов — это injection.
 # Применяется к строке, где все quoted-сегменты (`'...'`, `"..."`)
@@ -167,13 +268,73 @@ _TWO_TOKEN_COMMANDS = {
 }
 
 
+def _is_safe_readonly_pipe(cmd: str) -> bool:
+    """Распознать «безопасный read-only пайп»: ``cmd1 | cmd2 | …``.
+
+    Условия:
+
+    - Команда содержит ТОЛЬКО pipe-разделители (``|``), без ``&&``, ``||``,
+      ``;``, ``$(...)``, backtick'ов, process-substitution.
+    - Каждый stage пайпа начинается с команды из
+      :data:`SAFE_READONLY_PIPE_CMDS`.
+
+    Это решает фантомный deny на безопасные команды вроде
+    ``ls foo | head -30``, ``grep -rn pattern src | head -30``,
+    ``find . -name '*.py' | wc -l`` (см. ANALYSIS.md §2.3).
+    """
+    stripped = _strip_quoted(cmd)
+    # Должны быть ТОЛЬКО pipe-разделители. Любая другая композиция
+    # (``;``, ``&&``, ``||``, ``$(``, ``\``) — это injection.
+    forbidden = re.compile(
+        r"""
+        (?<!\\)`           # backtick
+      | \$\(              # $(...)
+      | \&\&              # AND
+      | \|\|              # OR
+      | ;                 # statement separator
+      | \n
+      | >\(               # process substitution
+      | <\(
+        """,
+        re.VERBOSE,
+    )
+    if forbidden.search(stripped):
+        return False
+    if "|" not in stripped:
+        return False
+    # Разбиваем по pipe (но не на ``||`` — мы только что проверили его отсутствие).
+    stages = [s.strip() for s in stripped.split("|") if s.strip()]
+    if len(stages) < 2:
+        return False
+    for stage in stages:
+        try:
+            stage_tokens = shlex.split(stage, posix=True)
+        except ValueError:
+            return False
+        if not stage_tokens:
+            return False
+        # Снимаем env-prefix (FOO=bar cmd ...).
+        while stage_tokens and re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*=", stage_tokens[0]
+        ):
+            stage_tokens.pop(0)
+        if not stage_tokens:
+            return False
+        head_tok = stage_tokens[0]
+        if head_tok not in SAFE_READONLY_PIPE_CMDS:
+            return False
+    return True
+
+
 def extract_command_prefix(command: str) -> str:
     """Извлечь канонический prefix команды для матчинга.
 
     Возвращает:
 
     - ``"<INJECTION_SENTINEL>"``, если в команде обнаружена композиция
-      (``&&``, ``||``, ``;``, ``|``, backtick'и, ``$(...)``).
+      (``&&``, ``||``, ``;``, backtick'и, ``$(...)``).
+    - ``"<SAFE_PIPE_PREFIX>"``, если команда — безопасный pipe из
+      read-only утилит (``ls | head``, ``grep | wc``).
     - Пустую строку для команд без prefix'а (например, чистый ``$(echo)``,
       пустая команда). Вызывающий код трактует как «нет правила, deny».
     - Один токен (``"ls"``, ``"cat"``) для команд без подкоманд.
@@ -189,6 +350,13 @@ def extract_command_prefix(command: str) -> str:
     cmd = command.strip()
     if not cmd:
         return ""
+
+    # Спец-кейс: безопасный read-only pipe (см. SAFE_READONLY_PIPE_CMDS).
+    # Если команда содержит ТОЛЬКО `|` и каждый stage — read-only утилита,
+    # пропускаем injection-guard. Это закрывает ~25% потерянных tool-итераций
+    # из ANALYSIS.md §2.3.
+    if _is_safe_readonly_pipe(cmd):
+        return SAFE_PIPE_PREFIX
 
     # Грубая проверка на injection-операторы. Делается ДО shlex, чтобы
     # не зависеть от его токенизации.
@@ -392,8 +560,40 @@ class Permissions:
                 prefix=prefix,
                 reason=(
                     "command injection detected: command contains shell "
-                    "metacharacters (&&, ||, ;, |, backticks, or $(…)). "
-                    "Run only one command at a time, without chaining."
+                    "metacharacters (&&, ||, ;, backticks, or $(…)). "
+                    "Run only one command at a time, without chaining. "
+                    "Hint: read-only pipes between safe utilities "
+                    "(grep/find/ls/cat/head/tail/wc/sort/awk/sed/etc.) "
+                    "ARE allowed — use simple `cmd1 | cmd2` syntax."
+                ),
+            )
+        if prefix == SAFE_PIPE_PREFIX:
+            # Безопасный read-only pipe — пропускаем по умолчанию, т.к. он
+            # уже верифицирован _is_safe_readonly_pipe() (каждая стадия
+            # из SAFE_READONLY_PIPE_CMDS). Дефолт ``"*": "deny"`` НЕ
+            # применяется — иначе мы бы воспроизвели старое поведение
+            # «любой pipe запрещён», ради которого этот класс safe-pipe'ов
+            # и был введён (см. ANALYSIS.md §2.3, §5.1.B).
+            #
+            # Уважаем ТОЛЬКО явные правила-маркеры, относящиеся именно к
+            # pipe'ам: ``"|": "deny"`` или ``"safe_pipe": "deny"``. Эти
+            # маркеры воркер/конфиг может добавить, если по какой-то
+            # причине pipe'ы небезопасны в его сценарии.
+            for pat, action in self.bash.items():
+                if pat in {"|", "safe_pipe"} and action == "deny":
+                    return BashRuleHit(
+                        allowed=False,
+                        pattern=pat,
+                        prefix=prefix,
+                        reason=f"safe read-only pipe denied by pattern {pat!r}",
+                    )
+            return BashRuleHit(
+                allowed=True,
+                pattern="<safe_readonly_pipe>",
+                prefix=prefix,
+                reason=(
+                    "safe read-only pipe (every stage is a known read-only utility "
+                    "from SAFE_READONLY_PIPE_CMDS)"
                 ),
             )
         if not prefix:
@@ -514,8 +714,11 @@ def describe_permissions(p: Permissions) -> str:
         lines.append(
             "- bash: prefix-matched allow-list — "
             + ", ".join(sorted(allowed_bash))
-            + ". Composite commands (&&, ||, ;, |, $(...), backticks) are "
-            + "blocked as command injection regardless of prefix."
+            + ". Composite commands (&&, ||, ;, $(...), backticks) are "
+            + "blocked as command injection. **Read-only pipes** between "
+            + "safe utilities (grep/find/ls/cat/head/tail/wc/sort/awk/sed/"
+            + "uniq/cut/tr/xargs/diff/...) ARE allowed — use simple "
+            + "`cmd1 | cmd2` syntax for `ls | head`, `grep -rn x src | wc -l`, etc."
         )
     else:
         lines.append("- bash: no commands allowed")

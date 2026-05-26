@@ -20,7 +20,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .runtime import RUNTIME_DIR_NAME, ensure_gitignore
+from .runtime import RUNTIME_DIR_NAME, ensure_gitattributes, ensure_gitignore
 
 
 @dataclass
@@ -32,6 +32,7 @@ class InitReport:
     skipped: list[Path]
     overwritten: list[Path]
     gitignore_updated: bool
+    gitattributes_updated: bool = False
 
     def describe(self) -> str:
         """Сообщение для вывода в TTY."""
@@ -44,6 +45,8 @@ class InitReport:
             lines.append(f"  · {p.relative_to(self.runtime_dir.parent)} (kept)")
         if self.gitignore_updated:
             lines.append("  + .gitignore (added orchX block)")
+        if self.gitattributes_updated:
+            lines.append("  + .gitattributes (added orchX merge=ours block)")
         return "\n".join(lines)
 
 
@@ -146,5 +149,10 @@ def init_project(
 
     # 3. Гарантируем .gitignore-блок.
     report.gitignore_updated = ensure_gitignore(project_root)
+
+    # 4. Гарантируем .gitattributes-блок (merge=ours для .orchx/) —
+    # предотвращает merge-конфликты на runtime-артефактах роя
+    # (см. ANALYSIS.md §3.2).
+    report.gitattributes_updated = ensure_gitattributes(project_root)
 
     return report

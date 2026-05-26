@@ -18,6 +18,17 @@ permission:
     "head *": allow
     "tail *": allow
     "wc *": allow
+    "find *": allow
+    "grep *": allow
+    "rg *": allow
+    "fd *": allow
+    "tree *": allow
+    "stat *": allow
+    "diff *": allow
+    "sort *": allow
+    "uniq *": allow
+    "awk *": allow
+    "sed *": allow
     "mkdir -p *": allow
     "python -c*": allow
     "python3 -c*": allow

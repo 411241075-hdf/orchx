@@ -1,7 +1,7 @@
 # PROJECT.md — контекст проекта для orchX-агентов
 
-> Этот файл прочитают **все** роли роя orchX (planner, implementer, debugger,
-> reviewer, merger, tester, architect) перед началом работы. Здесь надо
+> Этот файл прочитают **все** роли роя orchX (planner, architect,
+> implementer, reviewer, debugger, merger) перед началом работы. Здесь надо
 > кратко и плотно описать тебе твой проект так, чтобы LLM-агент мог
 > ориентироваться без додумывания.
 >

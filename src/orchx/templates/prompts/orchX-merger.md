@@ -22,6 +22,18 @@ permission:
     "cat *": allow
     "head *": allow
     "tail *": allow
+    "wc *": allow
+    "find *": allow
+    "grep *": allow
+    "rg *": allow
+    "fd *": allow
+    "tree *": allow
+    "stat *": allow
+    "diff *": allow
+    "sort *": allow
+    "uniq *": allow
+    "awk *": allow
+    "sed *": allow
     "uv run ruff*": allow
     "uv run mypy*": allow
     "python -m*": allow

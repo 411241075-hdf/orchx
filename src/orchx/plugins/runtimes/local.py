@@ -39,6 +39,7 @@ class LocalRuntime:
         effort: str | None,
         on_activity: Any = None,
         llm: Any = None,
+        max_steps_override: int | None = None,
     ) -> runner.WorkerOutcome:
         """Запустить worker через :func:`orchx.runner.run_worker`.
 
@@ -58,6 +59,7 @@ class LocalRuntime:
             log_file=log_file,
             effort=effort,
             on_activity=on_activity,
+            max_steps_override=max_steps_override,
         )
 
 

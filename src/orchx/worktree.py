@@ -478,11 +478,99 @@ async def commit_all(
     return await _git("rev-parse", "HEAD", cwd=worktree_path)
 
 
+async def ensure_integration_worktree_clean(
+    integration_worktree: Path,
+) -> list[str]:
+    """Гарантировать, что integration worktree чистый перед merge'ем.
+
+    ANALYSIS.md §3.2 показал, что ``fatal: stash failed`` на dirty
+    integration worktree был основной причиной merge-провалов. Корень
+    проблемы: в integration-worktree остаются runtime-артефакты
+    (``.orchx/task.md``, ``.orchx/results/*.json`` от merger'а или
+    предыдущих merge-операций), которые потом конфликтуют с очередным
+    мержем.
+
+    Эта функция:
+
+    1. Проверяет, нет ли активного незавершённого merge'а
+       (``MERGE_HEAD`` существует) — abort'ит его, если найден.
+    2. ``git reset --hard HEAD`` — сбрасывает любые tracked-правки.
+    3. ``git clean -fd .orchx/`` — чистит untracked-артефакты роя
+       (НЕ трогает остальные пути worktree, чтобы не задеть legitimate
+       состояние интеграционной ветки).
+
+    Returns:
+        Список строк-сообщений о выполненных действиях (для логов).
+    """
+    actions: list[str] = []
+    if not integration_worktree.exists():
+        return actions
+    # 1. Aborted-merge state.
+    merge_head = integration_worktree / ".git"
+    # В worktree .git — это файл-pointer на основной репо, MERGE_HEAD
+    # лежит в реальной директории worktree-state. Проверим обе возможности.
+    real_git_dir = await _resolve_worktree_git_dir(integration_worktree)
+    if real_git_dir and (real_git_dir / "MERGE_HEAD").exists():
+        try:
+            await _git("merge", "--abort", cwd=integration_worktree)
+            actions.append("aborted leftover merge state")
+        except GitError as e:
+            logger.warning(
+                "ensure_integration_worktree_clean: merge --abort failed: %s", e
+            )
+    # 2. Reset tracked changes.
+    try:
+        await _git("reset", "--hard", "HEAD", cwd=integration_worktree)
+        actions.append("reset --hard HEAD")
+    except GitError as e:
+        logger.warning(
+            "ensure_integration_worktree_clean: reset --hard failed: %s", e
+        )
+    # 3. Clean .orchx/ untracked artefacts. Используем -d для директорий,
+    # -f для force, -x НЕ используем чтобы не трогать .gitignore'нутые
+    # пользовательские файлы вне .orchx/.
+    try:
+        # `git clean` принимает pathspec'и — ограничим .orchx/.
+        await _git(
+            "clean", "-fd", "--", ".orchx/", cwd=integration_worktree
+        )
+        actions.append("clean -fd .orchx/")
+    except GitError:
+        # .orchx/ может не существовать в worktree вообще — это OK.
+        pass
+    _ = merge_head  # удержим для линтера
+    return actions
+
+
+async def _resolve_worktree_git_dir(worktree_path: Path) -> Path | None:
+    """Найти реальную директорию состояния worktree (``.git/worktrees/<name>/``).
+
+    В git worktree корневой ``.git`` — это файл с указанием на
+    ``.git/worktrees/<name>/`` основного репо. Эта функция читает его
+    и возвращает абсолютный путь.
+    """
+    git_pointer = worktree_path / ".git"
+    if not git_pointer.exists():
+        return None
+    if git_pointer.is_dir():
+        return git_pointer
+    try:
+        text = git_pointer.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    # Формат: ``gitdir: /abs/path/to/.git/worktrees/<name>``
+    if text.startswith("gitdir:"):
+        gd = text.split(":", 1)[1].strip()
+        return Path(gd)
+    return None
+
+
 async def merge_branch_into(
     integration_worktree: Path,
     source_branch: str,
     *,
     no_ff: bool = True,
+    pre_clean: bool = True,
 ) -> tuple[bool, str]:
     """Смержить source_branch в текущую ветку integration_worktree.
 
@@ -490,11 +578,17 @@ async def merge_branch_into(
         integration_worktree: Worktree, который чек-аутнут на интеграционную ветку.
         source_branch: Ветка воркера, которую мерджим.
         no_ff: Использовать --no-ff merge commit (рекомендуется для трассировки).
+        pre_clean: Выполнить :func:`ensure_integration_worktree_clean`
+            перед merge'ем (default True). Решает проблему «fatal: stash
+            failed» на dirty worktree (ANALYSIS.md §3.2).
 
     Returns:
         (success, output). success=False, если merge оставил конфликты или
         завершился с ошибкой.
     """
+    pre_clean_log: list[str] = []
+    if pre_clean:
+        pre_clean_log = await ensure_integration_worktree_clean(integration_worktree)
     args = ["merge", "--no-edit"]
     if no_ff:
         args.append("--no-ff")
@@ -508,6 +602,8 @@ async def merge_branch_into(
     )
     stdout_b, stderr_b = await proc.communicate()
     output = (stdout_b.decode() + stderr_b.decode()).strip()
+    if pre_clean_log:
+        output = "[pre-merge cleanup: " + ", ".join(pre_clean_log) + "]\n" + output
     return proc.returncode == 0, output
 
 

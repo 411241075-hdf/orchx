@@ -24,7 +24,6 @@ ALL_ROLES = (
     "planner",
     "architect",
     "implementer",
-    "tester",
     "debugger",
     "merger",
     "reviewer",
@@ -37,13 +36,23 @@ def _runtime() -> OrchXRuntime:
 
 @pytest.mark.parametrize("role", ALL_ROLES)
 def test_all_orchx_agents_parse(role: str) -> None:
-    """Каждый из 7 базовых agent-файлов должен парситься без ошибок."""
+    """Каждый из 6 базовых agent-файлов должен парситься без ошибок.
+
+    Раньше было 7 ролей; ``tester`` объединён с ``implementer`` (см.
+    ANALYSIS.md §2.5 / §5.1.E).
+    """
     spec = load_agent_spec(role, _runtime())
     assert spec.name == f"orchX-{role}"
     assert spec.role == role
     assert spec.description, f"{role}: пустой description"
     assert spec.body, f"{role}: пустой body"
     assert spec.max_steps > 0
+
+
+def test_tester_role_no_longer_shipped() -> None:
+    """``orchX-tester.md`` удалён — попытка загрузить должна падать."""
+    with pytest.raises(FileNotFoundError):
+        load_agent_spec("tester", _runtime())
 
 
 def test_implementer_permissions_match_file() -> None:

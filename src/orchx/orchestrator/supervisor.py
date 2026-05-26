@@ -27,11 +27,21 @@ logger = logging.getLogger(__name__)
 async def supervisor_loop(ctx: OrchXContext) -> None:
     """Фоновая корутина: heartbeat, прогресс-репорт, enforcement бюджета.
 
-    Делает heartbeat-лог каждые ``ctx.config.supervisor_interval_s`` секунд.
+    Делает heartbeat-лог каждые ``ctx.config.supervisor_interval_s`` секунд,
+    но ПЕЧАТАЕТ строку только при изменении значимых полей (counts /
+    retries / cost). Это исключает «84 одинаковых строки за 42 минуты»
+    из ANALYSIS.md §4.4. Безусловный heartbeat остаётся раз в 5 минут
+    как liveness-сигнал, чтобы было видно «supervisor жив».
+
     При превышении wall-budget или max_cost_usd — выставляет ``ctx.aborted``,
     оркестратор увидит и завершит run gracefully.
     """
     interval = max(1.0, ctx.config.supervisor_interval_s)
+    last_signature: tuple = ()
+    last_log_at: float = 0.0
+    # Безусловный heartbeat-интервал: даже если ничего не меняется,
+    # печатаем строку раз в 5 минут как liveness-сигнал.
+    LIVENESS_INTERVAL = 300.0
     while True:
         await asyncio.sleep(interval)
         if ctx.aborted:
@@ -41,18 +51,33 @@ async def supervisor_loop(ctx: OrchXContext) -> None:
         counts = {"success": 0, "failed": 0, "running": 0, "pending": 0, "skipped": 0}
         for s in ctx.states.values():
             counts[s.status] = counts.get(s.status, 0) + 1
-        orchx_log(
-            ctx,
-            f"[supervisor] elapsed={elapsed:.0f}s/{budget}s "
-            f"counts={counts} retries={ctx.total_retries}/"
-            f"{ctx.plan.global_budget.max_total_retries} "
-            f"cost=${ctx.total_cost_usd:.4f}"
-            + (
-                f"/${ctx.config.max_cost_usd:.2f}"
-                if ctx.config.max_cost_usd
-                else ""
-            ),
+        # Сигнатура: если она НЕ изменилась — пропускаем лог. cost
+        # округляем до 4 знаков чтобы микро-флуктуации между интервалами
+        # не считались «изменением».
+        signature = (
+            tuple(sorted(counts.items())),
+            ctx.total_retries,
+            round(ctx.total_cost_usd, 4),
         )
+        now = time.monotonic()
+        should_log = (
+            signature != last_signature or (now - last_log_at) >= LIVENESS_INTERVAL
+        )
+        if should_log:
+            orchx_log(
+                ctx,
+                f"[supervisor] elapsed={elapsed:.0f}s/{budget}s "
+                f"counts={counts} retries={ctx.total_retries}/"
+                f"{ctx.plan.global_budget.max_total_retries} "
+                f"cost=${ctx.total_cost_usd:.4f}"
+                + (
+                    f"/${ctx.config.max_cost_usd:.2f}"
+                    if ctx.config.max_cost_usd
+                    else ""
+                ),
+            )
+            last_signature = signature
+            last_log_at = now
         if elapsed > budget:
             orchx_log(
                 ctx,

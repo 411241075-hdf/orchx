@@ -73,10 +73,22 @@ memory: sqlite
 plugin_config:
   sqlite:
     path: .orchx/memory.db
-    # Опционально: embeddings для семантического recall (по умолчанию FTS5-only).
+    # Embeddings для семантического recall (ANALYSIS.md §4 / §5.1.D).
+    # **Сильно рекомендуется включить** — без них planner-recall работает
+    # FTS5-only (поиск по ключевым словам), что плохо ловит семантически
+    # похожие формулировки. С embeddings planner на похожей задаче видит
+    # релевантные прошлые subtask'и и не повторяет ошибки декомпозиции.
+    #
+    # Стоимость минимальна: ~$0.02 / 1M tokens для text-embedding-3-small.
+    # Если у тебя OpenAI-compatible /v1/embeddings (например, тот же
+    # ORCHX_LLM_BASE_URL предоставляет embeddings), просто раскомментируй:
     # embed_endpoint: ${ORCHX_LLM_BASE_URL}/v1/embeddings
     # embed_model: text-embedding-3-small
     # embed_api_key: ${ORCHX_LLM_API_KEY}
+    #
+    # Без embeddings всё работает, но:
+    # - recall качество ниже на синонимах / переформулировках;
+    # - не поиск по «семантической близости», только по словам.
 
   github-projects:
     # owner/repo (или ORG имя для org-level projects). Если не задан —

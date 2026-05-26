@@ -141,7 +141,7 @@ def build_system_prompt(
         f"inside the working directory. Read it first. Write your final "
         f"result to the JSON path "
         f"it specifies. After writing, finish with the short reply that the "
-        f"role section instructs (e.g. `done` for implementer/tester, "
+        f"role section instructs (e.g. `done` for implementer, "
         f"`plan written` for planner).\n"
         f"\n"
         f"# Agent role\n"

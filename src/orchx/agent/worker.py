@@ -260,6 +260,7 @@ async def run_agent(
     timeout_s: int = 1800,
     log_file: Path,
     on_activity: Callable[[str], Any] | None = None,
+    max_steps_override: int | None = None,
 ) -> WorkerOutcome:
     """Прогнать одного воркера.
 
@@ -279,6 +280,12 @@ async def run_agent(
             на запись, перетирая прежнее содержимое).
         on_activity: Callback на каждое заметное событие (текстовая дельта,
             начало tool-вызова). Используется TUI live-доской.
+        max_steps_override: Если задано, переопределяет ``spec.max_steps``
+            из frontmatter'а роли. Используется orchestrator'ом для
+            adaptive-расширения шагов на больших задачах (см.
+            ANALYSIS.md §3.2 / §5.1.A) — например, implementer на
+            гигантской функции с тестами получает 120+ steps вместо
+            стандартных 100.
     """
     # Загрузим спеку роли (system prompt + permissions + max_steps).
     # Каскад поиска промпта — через OrchXRuntime: сначала
@@ -287,6 +294,11 @@ async def run_agent(
 
     runtime = OrchXRuntime.from_project_root(repo_root)
     spec = _fm.load_agent_spec(role, runtime)
+    if max_steps_override is not None and max_steps_override > spec.max_steps:
+        # Не понижаем ниже значения из frontmatter'а; только расширяем.
+        import dataclasses
+
+        spec = dataclasses.replace(spec, max_steps=max_steps_override)
     return await run_agent_with_spec(
         spec=spec,
         cwd=cwd,

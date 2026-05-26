@@ -47,7 +47,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from .. import acceptance, paths, replanner, runner, worktree
+from .. import acceptance, paths, preloaded_context, replanner, runner, worktree
 from ..agent.llm import LLMClient, LLMConfig
 from ..dag import phase_levels
 from ..models import (
@@ -127,9 +127,14 @@ async def _initialize_context(
     _progress("loading plan")
     plan = load_plan(plan_path)
     run_dir = paths.run_dir(repo_root, plan.task_id)
-    worktrees_root = paths.worktrees_dir(repo_root, plan.task_id)
     run_dir.mkdir(parents=True, exist_ok=True)
+    worktrees_root = paths.worktrees_dir(repo_root, plan.task_id)
     worktrees_root.mkdir(parents=True, exist_ok=True)
+    # Если worktree-root вынесен наружу (macOS → ~/Library/Caches/),
+    # создаём symlink ``.orchx/runs/<task>/worktrees/`` → внешний путь
+    # для совместимости с TUI/pr_watcher/прочими утилитами, которые
+    # смотрят в run_dir по convention'у. См. paths.worktrees_dir docstring.
+    paths.ensure_worktrees_symlink(repo_root, plan.task_id)
     log_file = paths.orchx_log_path(repo_root, plan.task_id)
     if not log_file.exists():
         log_file.write_text("", encoding="utf-8")
@@ -320,6 +325,73 @@ async def _cleanup_previous_run(ctx: OrchXContext) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _snapshot_attempt_worktree(ctx: OrchXContext, state: TaskState) -> Path | None:
+    """Сделать snapshot worktree предыдущей попытки перед её удалением.
+
+    ANALYSIS.md §3.1 / §5.1.E: при retry через debugger существующий worktree
+    задачи **полностью пересоздаётся** от integration ветки — все правки
+    предыдущей попытки уходят. Это classic «lost-edits»: debugger видит
+    чистый worktree и переписывает с нуля, удваивая стоимость и риск
+    регрессий (`runbook-migration` и `cron-hidden-tests` в анализе —
+    оба потеряли результат attempt 1).
+
+    Snapshot — это рекурсивная копия worktree (без ``.git/``) в
+    ``.orchx/runs/<task>/snapshots/<subtask>.attempt<N>/``. Debugger
+    читает task.md, видит ссылку на snapshot и копирует оттуда нужные
+    файлы — это намного дешевле, чем полное переписывание.
+
+    Returns:
+        Путь к snapshot'у (для записи в task.md), либо None если
+        snapshot не создан (worktree пустой, ошибка I/O, etc.).
+    """
+    if not state.worktree_path.exists():
+        return None
+    if not state.attempts:
+        return None
+    last_attempt_num = state.attempts[-1].attempt_num
+    snapshot_dst = paths.snapshot_path(
+        ctx.repo_root, ctx.plan.task_id, state.spec.id, last_attempt_num
+    )
+    if snapshot_dst.exists():
+        # Уже снимали — не перезаписываем (старые попытки сохраняются как
+        # есть для аудита).
+        return snapshot_dst
+    snapshot_dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Игнорируем `.git/` (git-метаданные) и .orchx/ runtime-каталог
+        # (там task.md/results, они мусорят snapshot и не несут value).
+        import shutil
+
+        def _ignore(_dir: str, names: list[str]) -> list[str]:
+            return [
+                n
+                for n in names
+                if n in {".git", paths.WORKER_RUNTIME_DIR_NAME}
+                or n.startswith(".git_")
+            ]
+
+        shutil.copytree(state.worktree_path, snapshot_dst, ignore=_ignore)
+    except OSError as e:
+        _orchX_log(
+            ctx,
+            f"task {state.spec.id} snapshot failed (non-fatal): {e}",
+        )
+        # Чистим частичную копию.
+        try:
+            import shutil
+
+            shutil.rmtree(snapshot_dst, ignore_errors=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+    _orchX_log(
+        ctx,
+        f"task {state.spec.id} attempt {last_attempt_num} snapshotted to "
+        f"{snapshot_dst.relative_to(ctx.repo_root)}",
+    )
+    return snapshot_dst
+
+
 async def _prepare_worktree_for_task(ctx: OrchXContext, state: TaskState) -> None:
     """Создать (или пересоздать) worktree задачи от текущего состояния интеграционной ветки.
 
@@ -331,8 +403,14 @@ async def _prepare_worktree_for_task(ctx: OrchXContext, state: TaskState) -> Non
     воркер запускался параллельно с соседями, его base_ref был старее, и
     при retry'е нужен новый снимок (иначе debugger увидит «несуществующий»
     sibling-код и попробует его восстановить с устаревшего merge-base'а).
+
+    **Snapshot предыдущей попытки** (ANALYSIS.md §5.1.E) сохраняется
+    через :func:`_snapshot_attempt_worktree` ПЕРЕД удалением, чтобы
+    debugger мог восстановить наработки attempt N-1.
     """
     if state.worktree_path.exists():
+        # Перед сносом worktree — снимаем snapshot для debugger'а.
+        _snapshot_attempt_worktree(ctx, state)
         await worktree.remove_worktree(ctx.repo_root, state.worktree_path)
     await worktree.delete_branch(ctx.repo_root, state.branch)
     # Превентивно почистим .git/worktrees/<name>* и refs от macOS-дубликатов,
@@ -440,6 +518,16 @@ def _write_task_artifacts(
         branch=state.branch,
         result_path=result_path_rel,
     )
+    # ANALYSIS.md §5.1.C: предзагрузка фрагментов кода из inputs[] прямо
+    # в task.md, чтобы воркер не делал read/grep на каждом холодном старте.
+    preloaded = preloaded_context.render_preloaded_context(
+        repo_root=ctx.repo_root,
+        worktree_root=state.worktree_path,
+        inputs=state.spec.inputs,
+        cache=ctx.preloaded_excerpts_cache,
+    )
+    if preloaded:
+        task_md_content += "\n\n" + preloaded + "\n"
     # Inject «what's already merged» — без этого воркер слепой к контексту
     # роя и может откатить работу соседних задач (см. apologue в
     # _build_integration_state_section).
@@ -508,7 +596,23 @@ def _extract_activity(line: str) -> str:
     return cleaned[:100]
 
 
-def _build_debugger_context(state: TaskState) -> str:
+async def _recall_pitfalls_for_task(
+    ctx: OrchXContext, query: str
+) -> list[dict[str, Any]]:
+    """Вытащить relevant'ные known_pitfalls из memory для подмешивания в debugger context.
+
+    См. ANALYSIS.md §4.3 / §5.1.D: debugger выигрывает, если знает,
+    что аналогичная задача в прошлом упала с конкретной причиной.
+    """
+    if ctx.memory is None or not query:
+        return []
+    try:
+        return await ctx.memory.recall("known_pitfalls", query, k=3)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _build_debugger_context(state: TaskState, ctx: OrchXContext | None = None) -> str:
     """Сформировать структурированный контекст провала для orchX-debugger.
 
     Цель — дать агенту всё нужное для root-cause диагностики одним проходом
@@ -525,6 +629,24 @@ def _build_debugger_context(state: TaskState) -> str:
     parts.append(
         f"**Attempt #{last.attempt_num} verdict:** {last.failure_reason or '(unspecified)'}"
     )
+    # ANALYSIS.md §5.1.E: snapshot предыдущей попытки.
+    if ctx is not None:
+        snap_path = paths.snapshot_path(
+            ctx.repo_root, ctx.plan.task_id, state.spec.id, last.attempt_num
+        )
+        if snap_path.exists():
+            try:
+                rel = snap_path.relative_to(ctx.repo_root)
+            except ValueError:
+                rel = snap_path
+            parts.append(
+                f"**Snapshot of attempt #{last.attempt_num} worktree:** "
+                f"`{rel}` (relative to repo root). **Сначала скопируй "
+                f"оттуда твои наработки в текущий worktree** "
+                f"(`cp -r ../../{rel}/<file> .`), а потом фикси — иначе "
+                f"перепишешь всё с нуля, что в половине случаев и было "
+                f"корневой причиной провала. Полный путь: `{snap_path}`."
+            )
     if last.outcome:
         parts.append(
             f"**Wall time:** {last.outcome.duration_s:.1f}s, "
@@ -621,6 +743,55 @@ def _build_debugger_context(state: TaskState) -> str:
     return "\n".join(parts)
 
 
+def _compute_max_steps_override(state: TaskState, agent_role: str) -> int | None:
+    """Adaptive max_steps для воркера на крупной задаче.
+
+    Эвристика (ANALYSIS.md §3.2 / §5.1.A): крупные задачи (по
+    description, file_scope или количеству acceptance) требуют больше
+    LLM-шагов, иначе воркер выполнит часть работы и упрётся в
+    max_steps без записи result.json (exit 125), что приводит к
+    дорогому retry через debugger.
+
+    Возвращает:
+        - None, если override не нужен (frontmatter spec вполне достаточен).
+        - Положительное число — поднять max_steps до этого значения.
+
+    Override применяется только в большую сторону (см.
+    :func:`run_agent` — `max_steps_override > spec.max_steps`).
+    """
+    score = 0
+    # Длинный goal — задача неоднозначна, потребует разведки.
+    goal_len = len(state.spec.goal or "")
+    if goal_len > 1500:
+        score += 2
+    elif goal_len > 800:
+        score += 1
+    # Большой file_scope — много файлов нужно прочитать.
+    scope_size = len(state.spec.file_scope or [])
+    if scope_size >= 5:
+        score += 2
+    elif scope_size >= 3:
+        score += 1
+    # Много acceptance-проверок — каждая может давать failure-цикл.
+    acc_size = len(state.spec.acceptance or [])
+    if acc_size >= 5:
+        score += 1
+    # Implementer теперь пишет и код, и тесты в одном проходе (раньше это
+    # делалось отдельной ролью tester). Если goal содержит и код, и тесты —
+    # +шаги, чтобы не упереться в max_steps на гигантских функциях
+    # (см. ANALYSIS.md §3.2 / §5.1.E).
+    goal_lower = (state.spec.goal or "").lower()
+    if agent_role == "implementer" and (
+        "test" in goal_lower or "тест" in goal_lower
+    ):
+        score += 1
+    if score == 0:
+        return None
+    # Базовая шкала. Большинство frontmatter'ов держит 60-80 шагов;
+    # +20 на каждое очко — мягкое расширение.
+    return 80 + score * 20
+
+
 def _agent_for_attempt(ctx: OrchXContext, state: TaskState) -> str:
     """Какую роль воркера использовать на текущей попытке.
 
@@ -641,7 +812,7 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
 
     is_debugger_retry = attempt_num > 1 and ctx.config.use_debugger_on_retry
     agent_to_use = _agent_for_attempt(ctx, state)
-    debug_ctx = _build_debugger_context(state) if is_debugger_retry else None
+    debug_ctx = _build_debugger_context(state, ctx) if is_debugger_retry else None
 
     _orchX_log(
         ctx,
@@ -666,6 +837,13 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
     else:
         effort = ctx.config.effort
 
+    # Adaptive max_steps (см. ANALYSIS.md §3.2 / §5.1.A): если задача
+    # большая (длинный goal или scope трогает >3 файлов), увеличиваем
+    # шаги. На cron-hidden-tests из ANALYSIS.md attempt1 уперся в
+    # max_steps=60 на гигантской функции process_cron_batch — не успел
+    # ничего записать, exit=125, и пришлось всё переписывать debugger'у.
+    max_steps_override = _compute_max_steps_override(state, agent_to_use)
+
     def _on_activity(line: str) -> None:
         activity = _extract_activity(line)
         if activity:
@@ -681,6 +859,7 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
         log_file=log_file,
         effort=effort,
         on_activity=_on_activity,
+        max_steps_override=max_steps_override,
     )
     info.outcome = outcome
     state.current_activity = ""
@@ -1092,10 +1271,17 @@ async def _maybe_enqueue_followups(
 
     new_states: list[TaskState] = []
     for idx, fu in enumerate(state.last_result.needs_followup, start=1):
+        # Backward-compat: needs_followup мог содержать deprecated "tester" —
+        # переписываем на "implementer" (см. DEPRECATED_AGENT_ALIASES).
+        from ..models import DEPRECATED_AGENT_ALIASES as _DEP
+
+        if fu.agent in _DEP:
+            from dataclasses import replace as _replace
+
+            fu = _replace(fu, agent=_DEP[fu.agent])
         if fu.agent not in {
             "architect",
             "implementer",
-            "tester",
             "reviewer",
             "debugger",
         }:
@@ -1871,7 +2057,7 @@ def _render_reviewer_task_md(
   "notes": "Структурированный отчёт. Используй секции:\\n## Blocking issues\\n## Non-blocking issues\\n## Suggestions",
   "metrics": {{}},
   "needs_followup": [
-    {{ "agent": "implementer|tester|debugger", "goal": "Что доделать", "reason": "Почему" }}
+    {{ "agent": "implementer|debugger", "goal": "Что доделать", "reason": "Почему" }}
   ]
 }}
 ```
@@ -1901,14 +2087,120 @@ from .supervisor import (  # noqa: E402,F401
     _supervisor_loop,  # noqa: E402,F401
 )
 
+# Паттерны для извлечения координат из notes воркеров. Два независимых
+# шаблона:
+#
+# 1. ``backtick`-symbol + file:line`` — ``\`process_cron_batch\` в
+#    endpoints.py:4665``. Самый частый формат, запоминается воркерами
+#    как естественная форма указания «куда что положил».
+# 2. ``file:line`` — голая ссылка вроде ``backend/api/endpoints.py:4665``.
+#    Symbol будет None в этом случае; кладём только координату как
+#    "anonymous" — это всё равно ценно для следующего планировщика.
+_BACKTICK_SYMBOL_FILE_RE = re.compile(
+    r"""
+    `(?P<symbol>[A-Za-z_][A-Za-z_0-9]*)`     # `symbol_name` в backtick'ах
+    [^`\n]{0,80}?                              # опциональный «в»/«→»/слова
+    (?P<file>[A-Za-z0-9_/\-]+\.[A-Za-z0-9]+)   # файл с расширением
+    (?::(?P<line>\d+))?                        # опционально :NN
+    """,
+    re.VERBOSE,
+)
+
+_BARE_FILE_LINE_RE = re.compile(
+    r"""
+    (?<![A-Za-z0-9_/\-])                       # не часть длинного path/идентификатора
+    (?P<file>[A-Za-z0-9_/\-]+\.[A-Za-z0-9]{1,5})  # path/file.ext
+    :(?P<line>\d+)                             # обязательно :NN
+    """,
+    re.VERBOSE,
+)
+
+
+def _extract_code_locations(notes: str) -> list[dict[str, Any]]:
+    """Вытащить пары (symbol, file[:line]) из notes воркера.
+
+    notes воркеров обычно содержат фразы вроде:
+    - «функция `process_cron_batch` в endpoints.py:4665»
+    - «`_review_id_for_visibility` находится по адресу endpoints.py:4907»
+    - «выделил helper в backend/cron/processor.py»
+
+    Эта функция парсит такие упоминания, чтобы memory.db мог отдать
+    «где живёт <symbol>» при будущих запросах планировщика. Это
+    основной фидбек-цикл для ANALYSIS.md §4.3 / §5.1.D — без него
+    воркеры заново ищут уже найденные места.
+    """
+    if not notes:
+        return []
+    seen: set[tuple[str | None, str, str | None]] = set()
+    out: list[dict[str, Any]] = []
+
+    def _ok_file(file: str) -> bool:
+        if file.endswith((".md", ".txt", ".log", ".rst")):
+            return False
+        # Простые слова с расширением `.py` — отфильтруем «foo.bar» где
+        # `bar` слишком короткий идентификатор. Уже обеспечено regex'ом
+        # (минимум 1-5 chars в расширении), но добавляем явный санити.
+        return True
+
+    # 1. backtick'd symbols
+    for m in _BACKTICK_SYMBOL_FILE_RE.finditer(notes):
+        symbol = m.group("symbol")
+        file = m.group("file")
+        line = m.group("line")
+        if not _ok_file(file):
+            continue
+        if len(symbol) < 3:
+            continue
+        key = (symbol, file, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "symbol": symbol,
+                "file": file,
+                "line": int(line) if line else None,
+            }
+        )
+    # 2. bare file:line — для случаев когда symbol не в backtick'ах
+    for m in _BARE_FILE_LINE_RE.finditer(notes):
+        file = m.group("file")
+        line = m.group("line")
+        if not _ok_file(file):
+            continue
+        # Только если этот (file:line) ещё не зарегистрирован с symbol'ом.
+        if any(
+            existing["file"] == file and str(existing.get("line")) == line
+            for existing in out
+        ):
+            continue
+        key = (None, file, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"symbol": None, "file": file, "line": int(line)})
+    # Лимит — чтобы не раздувать БД на длинных notes.
+    return out[:50]
+
 
 async def _record_run_to_memory(ctx: OrchXContext, summary: dict[str, Any]) -> None:
-    """P0.3 / P2.4: после прогона сохранить план + результат в memory plugin.
+    """P0.3 / P2.4 + ANALYSIS.md §4 / §5.1.D: после прогона сохранить
+    план + результат в memory plugin.
 
-    Сохраняем 3 факта:
+    Сохраняем (по namespace'ам):
 
-    * ``plans/<task_id>`` — task_id + summary + repo_root для будущих похожих planner-вызовов.
-    * ``failures/<task_id>`` — если есть failed-задачи (для debugger context recall).
+    * ``plans/<task_id>`` — task_id + summary + repo_root.
+    * ``task_archive/<task_id>:<subtask_id>`` — детальные notes воркера +
+      файлы изменённые + acceptance results. **Главный namespace для
+      будущих похожих задач** — planner делает recall по теме, видит
+      что в этом проекте уже делалось.
+    * ``code_locations/<symbol>`` — координаты «<symbol> → file:line»,
+      извлечённые из notes. planner и воркеры могут искать «где живёт
+      <function_name>».
+    * ``failures/<task_id>`` — если есть failed-задачи.
+    * ``known_pitfalls/<id>`` — для каждой failed-попытки (категория
+      провала + краткое описание), чтобы будущие воркеры избегали тех
+      же подводных камней.
     * ``reviews/<task_id>`` — если был reviewer.
     """
     if ctx.memory is None:
@@ -1927,6 +2219,41 @@ async def _record_run_to_memory(ctx: OrchXContext, summary: dict[str, Any]) -> N
         }
         await ctx.memory.remember("plans", ctx.plan.task_id, plan_payload)
 
+        # task_archive + code_locations: для каждой success-задачи кладём
+        # её notes как «знание этого проекта», и парсим code-locations.
+        for task_summary in summary.get("tasks", []):
+            if task_summary.get("status") != "success":
+                continue
+            subtask_id = task_summary.get("id", "")
+            notes = task_summary.get("notes", "") or ""
+            archive_payload = {
+                "task_id": ctx.plan.task_id,
+                "subtask_id": subtask_id,
+                "agent": task_summary.get("agent", ""),
+                "goal": task_summary.get("goal", ""),
+                "files_changed": task_summary.get("artifacts", []),
+                "notes": notes[:4000],  # лимит размера на запись
+                "__repo_root__": repo_root_str,
+            }
+            await ctx.memory.remember(
+                "task_archive",
+                f"{ctx.plan.task_id}:{subtask_id}",
+                archive_payload,
+            )
+            for loc in _extract_code_locations(notes):
+                # Ключ "<symbol>:<file>" — позволяет хранить несколько
+                # символов с одним именем в разных файлах. Update-on-conflict
+                # перезапишет старую координату, что корректно (мы хотим
+                # последнее известное место).
+                key = f"{loc['symbol']}:{loc['file']}"
+                payload = {
+                    **loc,
+                    "task_id": ctx.plan.task_id,
+                    "subtask_id": subtask_id,
+                    "__repo_root__": repo_root_str,
+                }
+                await ctx.memory.remember("code_locations", key, payload)
+
         failed = [
             t for t in summary.get("tasks", []) if t.get("status") == "failed"
         ]
@@ -1940,6 +2267,24 @@ async def _record_run_to_memory(ctx: OrchXContext, summary: dict[str, Any]) -> N
             await ctx.memory.remember(
                 "failures", ctx.plan.task_id, fail_payload
             )
+            # known_pitfalls: ключевая идея ANALYSIS.md §5.1.D — пишем
+            # не просто «упало», а «упало по такой-то категории», чтобы
+            # будущий планировщик / воркер увидел паттерн.
+            for ft in failed:
+                pitfall_id = (
+                    f"{ctx.plan.task_id}:{ft.get('id', 'unknown')}"
+                )
+                pitfall_payload = {
+                    "task_id": ctx.plan.task_id,
+                    "subtask_id": ft.get("id", ""),
+                    "agent": ft.get("agent", ""),
+                    "failure_reason": ft.get("notes", "")[:500],
+                    "files_attempted": ft.get("file_scope", []),
+                    "__repo_root__": repo_root_str,
+                }
+                await ctx.memory.remember(
+                    "known_pitfalls", pitfall_id, pitfall_payload
+                )
         if ctx.review_state and ctx.review_state.last_result:
             review = ctx.review_state.last_result.review_report
             if review:
@@ -1975,6 +2320,7 @@ async def _invoke_runtime(
     effort: str | None,
     on_activity: Any = None,
     repo_root: Path | None = None,
+    max_steps_override: int | None = None,
 ) -> runner.WorkerOutcome:
     """Спавнить worker через ctx.runtime (плагин), если есть; иначе fallback на runner.
 
@@ -1994,9 +2340,10 @@ async def _invoke_runtime(
                 effort=effort,
                 on_activity=on_activity,
                 llm=ctx.llm,
+                max_steps_override=max_steps_override,
             )
         except TypeError:
-            # Старый runtime без llm kw — fallback.
+            # Старый runtime без llm/max_steps_override kw — fallback.
             return await ctx.runtime.spawn_worker(
                 cwd=cwd,
                 repo_root=_repo_root,
@@ -2017,6 +2364,7 @@ async def _invoke_runtime(
         log_file=log_file,
         effort=effort,
         on_activity=on_activity,
+        max_steps_override=max_steps_override,
     )
 
 

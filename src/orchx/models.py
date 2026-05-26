@@ -31,8 +31,20 @@ from typing import Any, Literal
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 VALID_AGENTS = frozenset(
-    {"architect", "implementer", "tester", "reviewer", "debugger", "merger"}
+    {"architect", "implementer", "reviewer", "debugger", "merger"}
 )
+
+# Устаревшие имена ролей: при загрузке plan.json silently переписываем
+# на актуальные. Backward-compat для уже сохранённых run'ов и для случаев,
+# когда planner LLM по инерции пишет старое имя.
+#
+# История:
+# - ``tester`` → ``implementer`` (объединили роли — ANALYSIS.md §2.5,
+#   §5.1.E: tester в холодном worktree не мог рефакторить production-код
+#   для тестируемости и вырождался в дублирование логики в test-файле).
+DEPRECATED_AGENT_ALIASES: dict[str, str] = {
+    "tester": "implementer",
+}
 
 # Агенты, которые нельзя планировать вручную — их вызывает диспетчер.
 # Если planner всё равно вкладывает их в plan.json (LLM не идеален), мы
@@ -239,11 +251,30 @@ def _fix_literal_escapes_in_python_dash_c(cmd: str) -> str:
 
 
 def _parse_task(raw: dict[str, Any]) -> TaskSpec:
-    """Распарсить и провалидировать одну задачу."""
+    """Распарсить и провалидировать одну задачу.
+
+    Устаревшие role-имена (см. :data:`DEPRECATED_AGENT_ALIASES`) silently
+    переписываются на актуальные. Это гарантирует backward-compat:
+    plan.json, написанный на старой версии orchX, продолжает загружаться.
+    """
+    import logging as _lg
+
+    _task_logger = _lg.getLogger(__name__)
     task_id = raw.get("id")
     if not isinstance(task_id, str) or not SLUG_RE.match(task_id):
         raise ValueError(f"Invalid task id: {task_id!r}")
     agent = raw.get("agent")
+    # Backward-compat: переименовываем устаревшие роли.
+    if isinstance(agent, str) and agent in DEPRECATED_AGENT_ALIASES:
+        new_agent = DEPRECATED_AGENT_ALIASES[agent]
+        _task_logger.warning(
+            "plan: task %r uses deprecated agent %r — silently rewritten to %r "
+            "(role merged: implementer now writes both code and its tests).",
+            task_id,
+            agent,
+            new_agent,
+        )
+        agent = new_agent
     if agent not in VALID_AGENTS:
         raise ValueError(f"Task {task_id}: invalid agent {agent!r}")
     goal = raw.get("goal", "")

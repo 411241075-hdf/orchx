@@ -291,7 +291,7 @@ def _orchX_config_from_args(args: argparse.Namespace) -> orchestrator.OrchXConfi
         supervisor_interval_s=getattr(args, "supervisor_interval_s", 30.0),
         effort=getattr(args, "effort", "high"),
         reviewer_effort=getattr(args, "reviewer_effort", "xhigh"),
-        debugger_effort=getattr(args, "debugger_effort", "xhigh"),
+        debugger_effort=getattr(args, "debugger_effort", "high"),
         merger_effort=getattr(args, "merger_effort", "high"),
         auto_replan=not getattr(args, "no_replan", False),
         replanner_effort=getattr(args, "replanner_effort", "xhigh"),
@@ -365,8 +365,13 @@ def _add_behavior_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--debugger-effort",
         choices=["minimal", "low", "medium", "high", "xhigh", "max"],
-        default="xhigh",
-        help="Effort для orchX-debugger (по умолчанию xhigh — диагностика требует глубины).",
+        default="high",
+        help=(
+            "Effort для orchX-debugger (по умолчанию high). ANALYSIS.md §5.1.G: "
+            "половина retry-кейсов — это lost-edits / merge-cleanup, где "
+            "xhigh неоправдан. Поднимай до xhigh для content-failure после "
+            "нескольких неуспешных retry'ев."
+        ),
     )
     p.add_argument(
         "--merger-effort",
@@ -542,6 +547,106 @@ def _resolve_tracker_task_id(args: argparse.Namespace) -> str:
     return env_val
 
 
+async def _build_planner_memory_context(repo_root: Path, task_text: str) -> str:
+    """Собрать relevant'ный context из memory.db для подмешивания в planner prompt.
+
+    Стратегия:
+
+    - Достаём ``plans`` namespace по recall(query=user-task) — топ-3 похожих
+      прошлых планов; даём их task_id + summary + counts.
+    - ``task_archive`` namespace — топ-5 семантически похожих subtask'ов
+      (notes описывают «что работало» в этом проекте).
+    - ``known_pitfalls`` — топ-5 известных подводных камней для этого репо.
+    - ``code_locations`` — выдержка для упомянутых в task_text имён символов.
+
+    Если memory plugin не настроен (или ничего не найдено), возвращаем "".
+
+    См. ANALYSIS.md §4 / §5.1.D.
+    """
+    # Lazy-import: не тащим plugins при простых subcommand'ах.
+    try:
+        from .plugins import registry as _registry
+    except Exception:  # noqa: BLE001
+        return ""
+    try:
+        plugins = _registry.load_from_config(
+            repo_root / ".orchx" / "config.yaml", repo_root=repo_root
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    memory = plugins.get("memory")
+    if memory is None or memory.__class__.__name__ == "NoopMemory":
+        return ""
+    sections: list[str] = []
+    try:
+        plans = await memory.recall("plans", task_text, k=3)
+    except Exception:  # noqa: BLE001
+        plans = []
+    if plans:
+        items = []
+        for p in plans:
+            v = p.get("value", {})
+            counts = v.get("counts", {})
+            items.append(
+                f"- **{v.get('task_id', '?')}** — {v.get('summary', '')[:200]} "
+                f"(counts={counts}, wall={v.get('wall_seconds', 0):.0f}s)"
+            )
+        if items:
+            sections.append(
+                "### Похожие прошлые планы (из memory.db)\n\n"
+                "Учитывай их структуру и фазирование при декомпозиции:\n\n"
+                + "\n".join(items)
+            )
+    try:
+        archives = await memory.recall("task_archive", task_text, k=5)
+    except Exception:  # noqa: BLE001
+        archives = []
+    if archives:
+        items = []
+        for a in archives:
+            v = a.get("value", {})
+            items.append(
+                f"- **{v.get('subtask_id', '?')}** ({v.get('agent', '?')}) — "
+                f"{v.get('goal', '')[:140]} → "
+                f"changed: {', '.join((v.get('files_changed') or [])[:5])}\n"
+                f"  notes: {v.get('notes', '')[:300]}"
+            )
+        if items:
+            sections.append(
+                "### Релевантные прошлые subtask'и (notes воркеров)\n\n"
+                "Это что воркеры РЕАЛЬНО делали в похожих задачах в этом проекте — "
+                "учитывай при формировании file_scope и acceptance:\n\n"
+                + "\n".join(items)
+            )
+    try:
+        pitfalls = await memory.recall("known_pitfalls", task_text, k=5)
+    except Exception:  # noqa: BLE001
+        pitfalls = []
+    if pitfalls:
+        items = []
+        for p in pitfalls:
+            v = p.get("value", {})
+            items.append(
+                f"- **{v.get('subtask_id', '?')}** ({v.get('agent', '?')}) — "
+                f"{v.get('failure_reason', '')[:200]}"
+            )
+        if items:
+            sections.append(
+                "### Известные подводные камни (из прошлых провалов)\n\n"
+                "Эти задачи проваливались раньше — учитывай при планировании, "
+                "не повторяй ту же декомпозицию или формулировку:\n\n"
+                + "\n".join(items)
+            )
+    if not sections:
+        return ""
+    return (
+        "## Memory recall (knowledge from past orchX runs in this repo)\n\n"
+        "Используй эти факты как context'ный prior, но не как догму — "
+        "если задача семантически другая, игнорируй.\n\n"
+        + "\n\n".join(sections)
+    )
+
+
 async def _cmd_plan(args: argparse.Namespace) -> int:
     """Запустить orchX-planner и записать план в ``orchx/runs/<task_id>/plan.json``.
 
@@ -574,11 +679,20 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
     if pending_log.exists():
         pending_log.unlink()
 
+    # ANALYSIS.md §5.1.D: подмешиваем relevant'ные факты из memory.db
+    # (предыдущие планы, code_locations, known_pitfalls) в prompt
+    # планировщика. Это тот самый «жить между задачами» эффект:
+    # когда planner стартует на похожей теме, он видит уже накопленные
+    # факты вместо холодного reset'а каждые run.
+    memory_context = await _build_planner_memory_context(repo_root, args.task)
+
     prompt = (
         f"User task:\n\n{args.task}\n\n"
         "Build an orchX plan and write it to .orchx/_pending/plan.json. "
         "Follow the planner agent rules strictly."
     )
+    if memory_context:
+        prompt += "\n\n" + memory_context
 
     tui.banner("orchX · planning", args.task[:80])
     spinner = tui.Spinner("running orchX-planner")
@@ -1602,7 +1716,7 @@ async def _cmd_tasks(args: argparse.Namespace) -> int:
                 supervisor_interval_s=getattr(args, "supervisor_interval_s", 30.0),
                 effort=getattr(args, "effort", "high"),
                 reviewer_effort=getattr(args, "reviewer_effort", "xhigh"),
-                debugger_effort=getattr(args, "debugger_effort", "xhigh"),
+                debugger_effort=getattr(args, "debugger_effort", "high"),
                 merger_effort=getattr(args, "merger_effort", "high"),
                 no_replan=getattr(args, "no_replan", False),
                 replanner_effort=getattr(args, "replanner_effort", "xhigh"),

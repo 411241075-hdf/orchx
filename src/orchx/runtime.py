@@ -213,6 +213,24 @@ GITIGNORE_BLOCK = """
 GITIGNORE_MARKER = "# orchX runtime (managed by orchx)"
 
 
+# Блок для .gitattributes: задаёт merge=ours для .orchx/ runtime-путей.
+# Это означает, что при merge'е integration→branch (или branch→branch)
+# изменения в .orchx/task.md, .orchx/results/*.json не будут вызывать
+# конфликт — победит «наша» (текущая) версия. Корректно для runtime-
+# артефактов, которые не должны влиять на бизнес-код. См. ANALYSIS.md §3.2.
+GITATTRIBUTES_BLOCK = """
+# orchX runtime (managed by orchx) — runtime-артефакты не должны вызывать merge conflict
+.orchx/task.md merge=ours
+.orchx/results/** merge=ours
+.orchx/runs/** merge=ours
+.orchx/_pending/** merge=ours
+.orchx/replan-context.md merge=ours
+.orchx/plan.json merge=ours
+"""
+
+GITATTRIBUTES_MARKER = "# orchX runtime (managed by orchx)"
+
+
 def ensure_gitignore(project_root: Path) -> bool:
     """Добавить orchX-блок в ``<project>/.gitignore``, если его там нет.
 
@@ -230,6 +248,29 @@ def ensure_gitignore(project_root: Path) -> bool:
     sep = "" if existing.endswith("\n") or not existing else "\n"
     new_content = existing + sep + GITIGNORE_BLOCK.lstrip("\n")
     gi.write_text(new_content, encoding="utf-8")
+    return True
+
+
+def ensure_gitattributes(project_root: Path) -> bool:
+    """Добавить orchX-блок в ``<project>/.gitattributes``.
+
+    Cтавит ``merge=ours`` для runtime-путей ``.orchx/...``, что
+    предотвращает merge-конфликты на этих файлах (ANALYSIS.md §3.2).
+
+    Идемпотентно: повторный вызов не дублирует.
+
+    Returns:
+        True, если файл был изменён (или создан), иначе False.
+    """
+    ga = project_root / ".gitattributes"
+    existing = ""
+    if ga.exists():
+        existing = ga.read_text(encoding="utf-8")
+        if GITATTRIBUTES_MARKER in existing:
+            return False
+    sep = "" if existing.endswith("\n") or not existing else "\n"
+    new_content = existing + sep + GITATTRIBUTES_BLOCK.lstrip("\n")
+    ga.write_text(new_content, encoding="utf-8")
     return True
 
 

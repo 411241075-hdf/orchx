@@ -99,6 +99,7 @@ async def run_worker(
     repo_root: Path | None = None,
     effort: str | None = None,
     on_activity=None,
+    max_steps_override: int | None = None,
 ) -> WorkerOutcome:
     """Спавнить in-process воркера и дождаться его завершения.
 
@@ -117,6 +118,9 @@ async def run_worker(
         effort: ``low|medium|high|xhigh``. ``None`` — без override.
         on_activity: Callback, получающий полезные строки из стрима LLM.
             Используется live-доской TUI.
+        max_steps_override: Поднять max_steps для этого вызова поверх
+            значения в frontmatter'е роли (используется orchestrator'ом
+            для adaptive max_steps на больших задачах).
     """
     return await run_agent(
         role=role,
@@ -128,4 +132,5 @@ async def run_worker(
         timeout_s=timeout_s,
         log_file=log_file,
         on_activity=on_activity,
+        max_steps_override=max_steps_override,
     )

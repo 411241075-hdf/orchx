@@ -19,7 +19,20 @@ permission:
     "head *": allow
     "tail *": allow
     "wc *": allow
+    "find *": allow
+    "grep *": allow
+    "rg *": allow
+    "fd *": allow
+    "tree *": allow
+    "stat *": allow
+    "diff *": allow
+    "sort *": allow
+    "uniq *": allow
+    "awk *": allow
+    "sed *": allow
     "mkdir -p *": allow
+    "cp *": allow
+    "cp -r *": allow
     "uv run pytest*": allow
     "uv run ruff*": allow
     "uv run mypy*": allow
@@ -30,6 +43,7 @@ permission:
     "ruff check*": allow
     "ruff format*": allow
     "mypy *": allow
+    "pytest *": allow
     "npm test*": allow
     "npm run test*": allow
     "npx vitest*": allow
@@ -68,11 +82,28 @@ permission:
      просто нет в worktree** — `read` возвращает «File not found» или
      оригинальное (доfix) содержимое.
 
-   Если ты видишь это расхождение — **корневая причина не в коде, а в
-   потере правок между attempt'ами**. Не нужно искать тонкий баг — нужно
-   просто реимплементировать задачу заново с нуля по plan.json + предыдущему
-   `notes`. Исключение: если файл реально содержит правки и ты воспроизвёл
-   acceptance failure — тогда классическая диагностика по углам ниже.
+   **🚨 Snapshot предыдущей попытки.** Диспетчер сохраняет копию
+   worktree предыдущей попытки в директорию snapshot'а — её путь
+   указан в секции `## Debugger context` в `task.md` (поле
+   `**Snapshot of attempt #N worktree:**`).
+
+   **Если файлов с правками нет в текущем worktree, но они есть в
+   snapshot'е** — НЕ переписывай с нуля. Скопируй из snapshot'а:
+
+   ```bash
+   ls .orchx/runs/<task>/snapshots/<subtask>.attempt<N>/
+   cp -r .orchx/runs/<task>/snapshots/<subtask>.attempt<N>/<file> <file>
+   ```
+
+   После восстановления продолжи фикс по acceptance failure'у. Это
+   exактно тот сценарий, который ANALYSIS.md §3.1 описал как «двойная
+   стоимость + удвоенный риск регрессий» — мы платим за это, если
+   игнорируем snapshot.
+
+   Если snapshot отсутствует (первая попытка не успела ничего записать,
+   exit 125 на ранних шагах), либо если файл реально присутствует в
+   worktree и ты воспроизвёл acceptance failure — тогда классическая
+   диагностика по углам ниже.
 
    **🚨 Shared-file дисциплина при reimplement.** Если для починки нужно
    ПЕРЕЗАПИСАТЬ shared-файл (например `backend/webapp.py`,
