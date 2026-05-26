@@ -39,9 +39,9 @@ VALID_AGENTS = frozenset(
 # когда planner LLM по инерции пишет старое имя.
 #
 # История:
-# - ``tester`` → ``implementer`` (объединили роли — ANALYSIS.md §2.5,
-#   §5.1.E: tester в холодном worktree не мог рефакторить production-код
-#   для тестируемости и вырождался в дублирование логики в test-файле).
+# - ``tester`` → ``implementer`` (объединили роли: tester в холодном
+#   worktree не мог рефакторить production-код для тестируемости и
+#   вырождался в дублирование логики в test-файле).
 DEPRECATED_AGENT_ALIASES: dict[str, str] = {
     "tester": "implementer",
 }

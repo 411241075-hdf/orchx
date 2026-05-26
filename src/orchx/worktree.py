@@ -483,12 +483,11 @@ async def ensure_integration_worktree_clean(
 ) -> list[str]:
     """Гарантировать, что integration worktree чистый перед merge'ем.
 
-    ANALYSIS.md §3.2 показал, что ``fatal: stash failed`` на dirty
-    integration worktree был основной причиной merge-провалов. Корень
-    проблемы: в integration-worktree остаются runtime-артефакты
-    (``.orchx/task.md``, ``.orchx/results/*.json`` от merger'а или
-    предыдущих merge-операций), которые потом конфликтуют с очередным
-    мержем.
+    ``fatal: stash failed`` на dirty integration worktree — основная
+    причина merge-провалов. Корень проблемы: в integration-worktree
+    остаются runtime-артефакты (``.orchx/task.md``,
+    ``.orchx/results/*.json`` от merger'а или предыдущих merge-операций),
+    которые потом конфликтуют с очередным мержем.
 
     Эта функция:
 
@@ -580,7 +579,7 @@ async def merge_branch_into(
         no_ff: Использовать --no-ff merge commit (рекомендуется для трассировки).
         pre_clean: Выполнить :func:`ensure_integration_worktree_clean`
             перед merge'ем (default True). Решает проблему «fatal: stash
-            failed» на dirty worktree (ANALYSIS.md §3.2).
+            failed» на dirty worktree.
 
     Returns:
         (success, output). success=False, если merge оставил конфликты или

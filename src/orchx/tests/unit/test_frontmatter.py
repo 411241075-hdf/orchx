@@ -38,8 +38,8 @@ def _runtime() -> OrchXRuntime:
 def test_all_orchx_agents_parse(role: str) -> None:
     """Каждый из 6 базовых agent-файлов должен парситься без ошибок.
 
-    Раньше было 7 ролей; ``tester`` объединён с ``implementer`` (см.
-    ANALYSIS.md §2.5 / §5.1.E).
+    Раньше было 7 ролей; ``tester`` объединён с ``implementer`` —
+    тесты пишет тот же агент, что реализует код.
     """
     spec = load_agent_spec(role, _runtime())
     assert spec.name == f"orchX-{role}"

@@ -217,7 +217,7 @@ GITIGNORE_MARKER = "# orchX runtime (managed by orchx)"
 # Это означает, что при merge'е integration→branch (или branch→branch)
 # изменения в .orchx/task.md, .orchx/results/*.json не будут вызывать
 # конфликт — победит «наша» (текущая) версия. Корректно для runtime-
-# артефактов, которые не должны влиять на бизнес-код. См. ANALYSIS.md §3.2.
+# артефактов, которые не должны влиять на бизнес-код.
 GITATTRIBUTES_BLOCK = """
 # orchX runtime (managed by orchx) — runtime-артефакты не должны вызывать merge conflict
 .orchx/task.md merge=ours
@@ -255,7 +255,7 @@ def ensure_gitattributes(project_root: Path) -> bool:
     """Добавить orchX-блок в ``<project>/.gitattributes``.
 
     Cтавит ``merge=ours`` для runtime-путей ``.orchx/...``, что
-    предотвращает merge-конфликты на этих файлах (ANALYSIS.md §3.2).
+    предотвращает merge-конфликты на этих файлах.
 
     Идемпотентно: повторный вызов не дублирует.
 

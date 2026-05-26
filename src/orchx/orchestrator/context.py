@@ -58,11 +58,11 @@ class OrchXConfig:
     reviewer_effort: str = "xhigh"
     """Усиленный effort для финального reviewer'а — recall важнее скорости."""
     debugger_effort: str = "high"
-    """Effort для debugger'а. По умолчанию ``high``: ANALYSIS.md §5.1.G
-    показал, что половина retry-кейсов — это «файл потерялся, переписать
-    с нуля» (lost-edits, merge-conflict cleanup), где xhigh неоправдан.
-    Поднимай до ``xhigh`` явно через ``--debugger-effort xhigh`` если
-    задача действительно сложная (content-failure после нескольких retry'ев)."""
+    """Effort для debugger'а. По умолчанию ``high``: половина
+    retry-кейсов — это «файл потерялся, переписать с нуля» (lost-edits,
+    merge-conflict cleanup), где xhigh неоправдан. Поднимай до
+    ``xhigh`` явно через ``--debugger-effort xhigh`` если задача
+    действительно сложная (content-failure после нескольких retry'ев)."""
     merger_effort: str = "high"
     """Effort для merger'а — обычно достаточно high."""
     auto_replan: bool = True
@@ -238,7 +238,7 @@ class OrchXContext:
     """Опциональный :class:`orchx.plugins.contracts.TrackerPlugin` —
     issue tracker. Если задан, orchestrator зовёт ``update_status`` на
     важных событиях (run start, task done, run failed)."""
-    # ANALYSIS.md §5.1.C: per-run кэш предзагруженных фрагментов кода
-    # для task.md. Ключ ``(rel_path, start, end)`` (start/end могут быть
-    # None — для целого файла), значение — _Excerpt.
+    # Per-run кэш предзагруженных фрагментов кода для task.md. Ключ
+    # ``(rel_path, start, end)`` (start/end могут быть None — для целого
+    # файла), значение — _Excerpt.
     preloaded_excerpts_cache: dict = field(default_factory=dict)

@@ -118,8 +118,8 @@ def test_prefix_allows_safe_readonly_pipes() -> None:
     """Pipe из read-only утилит (ls/grep/find/cat/head/wc/sort/awk/sed/...)
     помечается как SAFE_PIPE_PREFIX и пропускается guard'ом.
 
-    Это решает фантомный deny из ANALYSIS.md §2.3 — у воркеров было
-    >150 потерянных tool-итераций на банальные pipe'ы.
+    Это решает фантомный deny на банальные pipe'ы — раньше воркеры
+    тратили tool-итерации на их обход.
     """
     # Простые safe-pipes
     assert extract_command_prefix("ls -la | head -30") == SAFE_PIPE_PREFIX

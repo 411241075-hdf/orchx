@@ -367,9 +367,9 @@ def _add_behavior_flags(p: argparse.ArgumentParser) -> None:
         choices=["minimal", "low", "medium", "high", "xhigh", "max"],
         default="high",
         help=(
-            "Effort для orchX-debugger (по умолчанию high). ANALYSIS.md §5.1.G: "
-            "половина retry-кейсов — это lost-edits / merge-cleanup, где "
-            "xhigh неоправдан. Поднимай до xhigh для content-failure после "
+            "Effort для orchX-debugger (по умолчанию high). Половина "
+            "retry-кейсов — это lost-edits / merge-cleanup, где xhigh "
+            "неоправдан. Поднимай до xhigh для content-failure после "
             "нескольких неуспешных retry'ев."
         ),
     )
@@ -560,8 +560,6 @@ async def _build_planner_memory_context(repo_root: Path, task_text: str) -> str:
     - ``code_locations`` — выдержка для упомянутых в task_text имён символов.
 
     Если memory plugin не настроен (или ничего не найдено), возвращаем "".
-
-    См. ANALYSIS.md §4 / §5.1.D.
     """
     # Lazy-import: не тащим plugins при простых subcommand'ах.
     try:
@@ -679,11 +677,10 @@ async def _cmd_plan(args: argparse.Namespace) -> int:
     if pending_log.exists():
         pending_log.unlink()
 
-    # ANALYSIS.md §5.1.D: подмешиваем relevant'ные факты из memory.db
-    # (предыдущие планы, code_locations, known_pitfalls) в prompt
-    # планировщика. Это тот самый «жить между задачами» эффект:
-    # когда planner стартует на похожей теме, он видит уже накопленные
-    # факты вместо холодного reset'а каждые run.
+    # Подмешиваем relevant'ные факты из memory.db (предыдущие планы,
+    # code_locations, known_pitfalls) в prompt планировщика. Это даёт
+    # эффект «жить между задачами»: когда planner стартует на похожей
+    # теме, он видит уже накопленные факты вместо холодного reset'а.
     memory_context = await _build_planner_memory_context(repo_root, args.task)
 
     prompt = (

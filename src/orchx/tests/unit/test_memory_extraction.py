@@ -1,4 +1,4 @@
-"""Тесты для извлечения фактов из notes воркеров (ANALYSIS.md §4 / §5.1.D)."""
+"""Тесты для извлечения фактов из notes воркеров для memory.db."""
 
 from __future__ import annotations
 

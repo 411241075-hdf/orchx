@@ -73,7 +73,7 @@ memory: sqlite
 plugin_config:
   sqlite:
     path: .orchx/memory.db
-    # Embeddings для семантического recall (ANALYSIS.md §4 / §5.1.D).
+    # Embeddings для семантического recall в memory.db.
     # **Сильно рекомендуется включить** — без них planner-recall работает
     # FTS5-only (поиск по ключевым словам), что плохо ловит семантически
     # похожие формулировки. С embeddings planner на похожей задаче видит

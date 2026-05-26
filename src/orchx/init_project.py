@@ -151,8 +151,7 @@ def init_project(
     report.gitignore_updated = ensure_gitignore(project_root)
 
     # 4. Гарантируем .gitattributes-блок (merge=ours для .orchx/) —
-    # предотвращает merge-конфликты на runtime-артефактах роя
-    # (см. ANALYSIS.md §3.2).
+    # предотвращает merge-конфликты на runtime-артефактах роя.
     report.gitattributes_updated = ensure_gitattributes(project_root)
 
     return report

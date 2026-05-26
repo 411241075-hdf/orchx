@@ -29,9 +29,9 @@ async def supervisor_loop(ctx: OrchXContext) -> None:
 
     Делает heartbeat-лог каждые ``ctx.config.supervisor_interval_s`` секунд,
     но ПЕЧАТАЕТ строку только при изменении значимых полей (counts /
-    retries / cost). Это исключает «84 одинаковых строки за 42 минуты»
-    из ANALYSIS.md §4.4. Безусловный heartbeat остаётся раз в 5 минут
-    как liveness-сигнал, чтобы было видно «supervisor жив».
+    retries / cost) — иначе лог захлёбывается одинаковыми строками.
+    Безусловный heartbeat остаётся раз в 5 минут как liveness-сигнал,
+    чтобы было видно «supervisor жив».
 
     При превышении wall-budget или max_cost_usd — выставляет ``ctx.aborted``,
     оркестратор увидит и завершит run gracefully.

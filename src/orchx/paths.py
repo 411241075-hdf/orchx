@@ -196,9 +196,9 @@ def external_worktrees_root() -> Path | None:
 
     На macOS git-worktree в ``.orchx/runs/`` страдает от Finder/Spotlight/
     iCloud, которые периодически создают «<file> 2» дубли. Чтобы убрать
-    источник проблемы (а не лечить симптом — см. ANALYSIS.md §4.4 и
-    §5.1.F), worktree выносим в ``~/Library/Caches/orchx/worktrees/``,
-    которая Finder'ом не индексируется.
+    источник проблемы (а не лечить симптом), worktree выносим в
+    ``~/Library/Caches/orchx/worktrees/``, которая Finder'ом не
+    индексируется.
 
     На Linux/Windows возвращаем None — worktree остаются in-tree
     (``.orchx/runs/<task>/worktrees/``).
@@ -287,7 +287,7 @@ def ensure_worktrees_symlink(repo_root: Path, task_id: str) -> None:
 def snapshots_dir(repo_root: Path, task_id: str) -> Path:
     """Каталог со snapshot'ами worktree'ов перед retry.
 
-    См. :func:`snapshot_path` и ANALYSIS.md §3.1 / §5.1.E.
+    См. :func:`snapshot_path`.
     """
     return run_dir(repo_root, task_id) / "snapshots"
 
@@ -300,7 +300,7 @@ def snapshot_path(
     Snapshot содержит копию worktree (без ``.git/``) перед тем, как
     debugger пересоздаст его для retry'я. Позволяет debugger'у видеть
     что именно сделал предыдущий attempt и продолжить с этого места,
-    а не переписывать с нуля (см. ANALYSIS.md §3.1).
+    а не переписывать с нуля.
     """
     return snapshots_dir(repo_root, task_id) / f"{subtask_id}.attempt{attempt}"
 

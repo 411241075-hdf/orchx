@@ -50,8 +50,9 @@ SAFE_PIPE_PREFIX = "__safe_readonly_pipe__"
 # Эти команды не пишут в ФС, не делают сетевых запросов, не выполняют
 # произвольный код. Если КАЖДЫЙ stage пайпа — из этого набора, мы
 # трактуем весь пайп как одну read-only команду и обходим
-# injection-guard. Это решает кейс из ANALYSIS.md §2.3: `ls foo | head`,
-# `grep -rn pattern src | head -30`, `find . -name '*.py' | wc -l`.
+# injection-guard. Это решает кейс типичных read-only пайпов:
+# `ls foo | head`, `grep -rn pattern src | head -30`,
+# `find . -name '*.py' | wc -l`.
 SAFE_READONLY_PIPE_CMDS: frozenset[str] = frozenset(
     {
         # Поиск/обход
@@ -280,7 +281,7 @@ def _is_safe_readonly_pipe(cmd: str) -> bool:
 
     Это решает фантомный deny на безопасные команды вроде
     ``ls foo | head -30``, ``grep -rn pattern src | head -30``,
-    ``find . -name '*.py' | wc -l`` (см. ANALYSIS.md §2.3).
+    ``find . -name '*.py' | wc -l``.
     """
     stripped = _strip_quoted(cmd)
     # Должны быть ТОЛЬКО pipe-разделители. Любая другая композиция
@@ -353,8 +354,7 @@ def extract_command_prefix(command: str) -> str:
 
     # Спец-кейс: безопасный read-only pipe (см. SAFE_READONLY_PIPE_CMDS).
     # Если команда содержит ТОЛЬКО `|` и каждый stage — read-only утилита,
-    # пропускаем injection-guard. Это закрывает ~25% потерянных tool-итераций
-    # из ANALYSIS.md §2.3.
+    # пропускаем injection-guard.
     if _is_safe_readonly_pipe(cmd):
         return SAFE_PIPE_PREFIX
 
@@ -573,7 +573,7 @@ class Permissions:
             # из SAFE_READONLY_PIPE_CMDS). Дефолт ``"*": "deny"`` НЕ
             # применяется — иначе мы бы воспроизвели старое поведение
             # «любой pipe запрещён», ради которого этот класс safe-pipe'ов
-            # и был введён (см. ANALYSIS.md §2.3, §5.1.B).
+            # и был введён.
             #
             # Уважаем ТОЛЬКО явные правила-маркеры, относящиеся именно к
             # pipe'ам: ``"|": "deny"`` или ``"safe_pipe": "deny"``. Эти

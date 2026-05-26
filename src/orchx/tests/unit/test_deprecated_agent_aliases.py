@@ -1,7 +1,7 @@
 """Тесты на silent rewrite устаревших role-имён в plan.json.
 
-См. :data:`orchx.models.DEPRECATED_AGENT_ALIASES` и ANALYSIS.md §2.5
-(объединение implementer + tester в одну роль).
+См. :data:`orchx.models.DEPRECATED_AGENT_ALIASES`. Роли ``tester`` и
+``implementer`` объединены: тесты пишет тот же агент, что реализует код.
 """
 
 from __future__ import annotations

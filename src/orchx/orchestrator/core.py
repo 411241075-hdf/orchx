@@ -328,12 +328,10 @@ async def _cleanup_previous_run(ctx: OrchXContext) -> None:
 def _snapshot_attempt_worktree(ctx: OrchXContext, state: TaskState) -> Path | None:
     """Сделать snapshot worktree предыдущей попытки перед её удалением.
 
-    ANALYSIS.md §3.1 / §5.1.E: при retry через debugger существующий worktree
-    задачи **полностью пересоздаётся** от integration ветки — все правки
-    предыдущей попытки уходят. Это classic «lost-edits»: debugger видит
-    чистый worktree и переписывает с нуля, удваивая стоимость и риск
-    регрессий (`runbook-migration` и `cron-hidden-tests` в анализе —
-    оба потеряли результат attempt 1).
+    При retry через debugger существующий worktree задачи **полностью
+    пересоздаётся** от integration ветки — все правки предыдущей
+    попытки уходят. Это classic «lost-edits»: debugger видит чистый
+    worktree и переписывает с нуля, удваивая стоимость и риск регрессий.
 
     Snapshot — это рекурсивная копия worktree (без ``.git/``) в
     ``.orchx/runs/<task>/snapshots/<subtask>.attempt<N>/``. Debugger
@@ -404,9 +402,9 @@ async def _prepare_worktree_for_task(ctx: OrchXContext, state: TaskState) -> Non
     при retry'е нужен новый снимок (иначе debugger увидит «несуществующий»
     sibling-код и попробует его восстановить с устаревшего merge-base'а).
 
-    **Snapshot предыдущей попытки** (ANALYSIS.md §5.1.E) сохраняется
-    через :func:`_snapshot_attempt_worktree` ПЕРЕД удалением, чтобы
-    debugger мог восстановить наработки attempt N-1.
+    **Snapshot предыдущей попытки** сохраняется через
+    :func:`_snapshot_attempt_worktree` ПЕРЕД удалением, чтобы debugger
+    мог восстановить наработки attempt N-1.
     """
     if state.worktree_path.exists():
         # Перед сносом worktree — снимаем snapshot для debugger'а.
@@ -518,8 +516,8 @@ def _write_task_artifacts(
         branch=state.branch,
         result_path=result_path_rel,
     )
-    # ANALYSIS.md §5.1.C: предзагрузка фрагментов кода из inputs[] прямо
-    # в task.md, чтобы воркер не делал read/grep на каждом холодном старте.
+    # Предзагрузка фрагментов кода из inputs[] прямо в task.md, чтобы
+    # воркер не делал read/grep на каждом холодном старте.
     preloaded = preloaded_context.render_preloaded_context(
         repo_root=ctx.repo_root,
         worktree_root=state.worktree_path,
@@ -601,8 +599,8 @@ async def _recall_pitfalls_for_task(
 ) -> list[dict[str, Any]]:
     """Вытащить relevant'ные known_pitfalls из memory для подмешивания в debugger context.
 
-    См. ANALYSIS.md §4.3 / §5.1.D: debugger выигрывает, если знает,
-    что аналогичная задача в прошлом упала с конкретной причиной.
+    Debugger выигрывает, если знает, что аналогичная задача в прошлом
+    упала с конкретной причиной.
     """
     if ctx.memory is None or not query:
         return []
@@ -629,7 +627,7 @@ def _build_debugger_context(state: TaskState, ctx: OrchXContext | None = None) -
     parts.append(
         f"**Attempt #{last.attempt_num} verdict:** {last.failure_reason or '(unspecified)'}"
     )
-    # ANALYSIS.md §5.1.E: snapshot предыдущей попытки.
+    # Snapshot предыдущей попытки для debugger'а.
     if ctx is not None:
         snap_path = paths.snapshot_path(
             ctx.repo_root, ctx.plan.task_id, state.spec.id, last.attempt_num
@@ -746,11 +744,10 @@ def _build_debugger_context(state: TaskState, ctx: OrchXContext | None = None) -
 def _compute_max_steps_override(state: TaskState, agent_role: str) -> int | None:
     """Adaptive max_steps для воркера на крупной задаче.
 
-    Эвристика (ANALYSIS.md §3.2 / §5.1.A): крупные задачи (по
-    description, file_scope или количеству acceptance) требуют больше
-    LLM-шагов, иначе воркер выполнит часть работы и упрётся в
-    max_steps без записи result.json (exit 125), что приводит к
-    дорогому retry через debugger.
+    Эвристика: крупные задачи (по description, file_scope или количеству
+    acceptance) требуют больше LLM-шагов, иначе воркер выполнит часть
+    работы и упрётся в max_steps без записи result.json (exit 125), что
+    приводит к дорогому retry через debugger.
 
     Возвращает:
         - None, если override не нужен (frontmatter spec вполне достаточен).
@@ -778,8 +775,7 @@ def _compute_max_steps_override(state: TaskState, agent_role: str) -> int | None
         score += 1
     # Implementer теперь пишет и код, и тесты в одном проходе (раньше это
     # делалось отдельной ролью tester). Если goal содержит и код, и тесты —
-    # +шаги, чтобы не упереться в max_steps на гигантских функциях
-    # (см. ANALYSIS.md §3.2 / §5.1.E).
+    # +шаги, чтобы не упереться в max_steps на гигантских функциях.
     goal_lower = (state.spec.goal or "").lower()
     if agent_role == "implementer" and (
         "test" in goal_lower or "тест" in goal_lower
@@ -837,11 +833,10 @@ async def _run_one_attempt(ctx: OrchXContext, state: TaskState) -> AttemptInfo:
     else:
         effort = ctx.config.effort
 
-    # Adaptive max_steps (см. ANALYSIS.md §3.2 / §5.1.A): если задача
-    # большая (длинный goal или scope трогает >3 файлов), увеличиваем
-    # шаги. На cron-hidden-tests из ANALYSIS.md attempt1 уперся в
-    # max_steps=60 на гигантской функции process_cron_batch — не успел
-    # ничего записать, exit=125, и пришлось всё переписывать debugger'у.
+    # Adaptive max_steps: если задача большая (длинный goal или scope
+    # трогает >3 файлов), увеличиваем шаги. Иначе воркер уткнётся в
+    # max_steps на гигантских функциях, не успеет записать result.json
+    # (exit 125), и debugger будет вынужден переписывать всё с нуля.
     max_steps_override = _compute_max_steps_override(state, agent_to_use)
 
     def _on_activity(line: str) -> None:
@@ -2125,8 +2120,7 @@ def _extract_code_locations(notes: str) -> list[dict[str, Any]]:
     - «выделил helper в backend/cron/processor.py»
 
     Эта функция парсит такие упоминания, чтобы memory.db мог отдать
-    «где живёт <symbol>» при будущих запросах планировщика. Это
-    основной фидбек-цикл для ANALYSIS.md §4.3 / §5.1.D — без него
+    «где живёт <symbol>» при будущих запросах планировщика. Без этого
     воркеры заново ищут уже найденные места.
     """
     if not notes:
@@ -2184,8 +2178,7 @@ def _extract_code_locations(notes: str) -> list[dict[str, Any]]:
 
 
 async def _record_run_to_memory(ctx: OrchXContext, summary: dict[str, Any]) -> None:
-    """P0.3 / P2.4 + ANALYSIS.md §4 / §5.1.D: после прогона сохранить
-    план + результат в memory plugin.
+    """После прогона сохранить план + результат в memory plugin.
 
     Сохраняем (по namespace'ам):
 
@@ -2267,9 +2260,8 @@ async def _record_run_to_memory(ctx: OrchXContext, summary: dict[str, Any]) -> N
             await ctx.memory.remember(
                 "failures", ctx.plan.task_id, fail_payload
             )
-            # known_pitfalls: ключевая идея ANALYSIS.md §5.1.D — пишем
-            # не просто «упало», а «упало по такой-то категории», чтобы
-            # будущий планировщик / воркер увидел паттерн.
+            # known_pitfalls: пишем не просто «упало», а «упало по такой-то
+            # категории», чтобы будущий планировщик / воркер увидел паттерн.
             for ft in failed:
                 pitfall_id = (
                     f"{ctx.plan.task_id}:{ft.get('id', 'unknown')}"

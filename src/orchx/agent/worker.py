@@ -282,10 +282,9 @@ async def run_agent(
             начало tool-вызова). Используется TUI live-доской.
         max_steps_override: Если задано, переопределяет ``spec.max_steps``
             из frontmatter'а роли. Используется orchestrator'ом для
-            adaptive-расширения шагов на больших задачах (см.
-            ANALYSIS.md §3.2 / §5.1.A) — например, implementer на
-            гигантской функции с тестами получает 120+ steps вместо
-            стандартных 100.
+            adaptive-расширения шагов на больших задачах — например,
+            implementer на гигантской функции с тестами получает 120+
+            steps вместо стандартных 100.
     """
     # Загрузим спеку роли (system prompt + permissions + max_steps).
     # Каскад поиска промпта — через OrchXRuntime: сначала
